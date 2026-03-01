@@ -95,7 +95,7 @@ export default function Chat() {
     ]);
 
   } catch (err) {
-    setError('Failed to get AI response. Try again.');
+    setError('AI response failed. The server may be busy — please try again in a moment.');
     setMessages(prev => prev.filter(m => m.id !== tempId));
   } finally {
     setSending(false);
