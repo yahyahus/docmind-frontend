@@ -18,78 +18,138 @@ export default function Login() {
       const formData = new URLSearchParams();
       formData.append('username', email);
       formData.append('password', password);
-
       const response = await api.post('/auth/login', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-
       Cookies.set('token', response.data.access_token, { expires: 1 });
       router.push('/dashboard');
-    } catch (err) {
+    } catch {
       setError('Invalid email or password');
     } finally {
       setLoading(false);
     }
   }, [email, password, router]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      handleLogin();
-    }
-  }, [handleLogin]);
-
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <div className="bg-gray-900 p-8 rounded-2xl w-full max-w-md border border-gray-800">
-        <h1 className="text-2xl font-bold text-white mb-2">Welcome back</h1>
-        <p className="text-gray-400 mb-8">Sign in to DocMind</p>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
 
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 text-red-400 rounded-lg p-3 mb-4 text-sm">
-            {error}
+      {/* Background glow */}
+      <div style={{
+        position: 'fixed', top: '20%', left: '50%', transform: 'translateX(-50%)',
+        width: '600px', height: '400px',
+        background: 'radial-gradient(ellipse, #6366F115 0%, transparent 70%)',
+        pointerEvents: 'none',
+      }} />
+
+      <div className="animate-fade-up" style={{ width: '100%', maxWidth: '400px' }}>
+
+        {/* Logo */}
+        <div style={{ marginBottom: '40px', textAlign: 'center' }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: '10px',
+            marginBottom: '8px',
+          }}>
+            <div style={{
+              width: '32px', height: '32px', borderRadius: '8px',
+              background: 'linear-gradient(135deg, #6366F1, #818CF8)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '16px',
+            }}>◈</div>
+            <span className="font-mono" style={{ fontSize: '20px', fontWeight: 500, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+              DocMind
+            </span>
           </div>
-        )}
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="you@example.com"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="••••••••"
-              className="w-full bg-gray-800 border border-gray-700 transition-colors"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={handleLogin}
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-medium py-3 rounded-lg transition-colors"
-          >
-            {loading ? 'Signing in...' : 'Sign in'}
-          </button>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>
+            Sign in to your workspace
+          </p>
         </div>
 
-        <p className="text-center text-gray-400 mt-6 text-sm">
-          Don&apos;t have an account?{' '}
-          <a href="/register" className="text-blue-400 hover:text-blue-300">
+        {/* Card */}
+        <div style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border)',
+          borderRadius: '16px',
+          padding: '32px',
+        }}>
+
+          {error && (
+            <div style={{
+              background: '#F8717115',
+              border: '1px solid #F8717130',
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '20px',
+              color: 'var(--danger)',
+              fontSize: '13px',
+            }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Email
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                style={{
+                  width: '100%', background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)', borderRadius: '8px',
+                  padding: '12px 14px', color: 'var(--text-primary)',
+                  fontSize: '14px', outline: 'none', transition: 'border-color 0.2s',
+                }}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                style={{
+                  width: '100%', background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)', borderRadius: '8px',
+                  padding: '12px 14px', color: 'var(--text-primary)',
+                  fontSize: '14px', outline: 'none', transition: 'border-color 0.2s',
+                }}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleLogin}
+              disabled={loading}
+              style={{
+                width: '100%', marginTop: '4px',
+                background: loading ? 'var(--bg-elevated)' : 'linear-gradient(135deg, #6366F1, #818CF8)',
+                border: '1px solid ' + (loading ? 'var(--border)' : 'transparent'),
+                borderRadius: '8px', padding: '13px',
+                color: loading ? 'var(--text-muted)' : 'white',
+                fontSize: '14px', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s', letterSpacing: '0.01em',
+              }}
+            >
+              {loading ? 'Signing in...' : 'Sign in →'}
+            </button>
+          </div>
+        </div>
+
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginTop: '20px' }}>
+          No account?{' '}
+          <a href="/register" style={{ color: 'var(--accent-bright)', textDecoration: 'none' }}>
             Create one
           </a>
         </p>

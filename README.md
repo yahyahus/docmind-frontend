@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DocMind Frontend
 
-## Getting Started
+Next.js frontend for DocMind — an AI document chat application.
 
-First, run the development server:
+**Live App:** https://docmind-frontend-eight.vercel.app  
+**Backend Repo:** https://github.com/yahyahus/docmind
 
+## Tech Stack
+- **Framework:** Next.js 14 (App Router)
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS
+- **HTTP Client:** Axios with JWT interceptors
+- **Auth:** JWT tokens stored in cookies
+- **Deployment:** Vercel
+
+## Features
+- Register and login with JWT authentication
+- Upload PDF and TXT documents
+- Process documents for AI (creates vector embeddings)
+- Chat with documents using RAG pipeline
+- Real-time chat UI with typing indicators
+- Search documents by title
+- Persistent conversations per document
+
+## Pages
+| Route | Description |
+|-------|-------------|
+| / | Redirects to dashboard or login |
+| /login | Email + password login |
+| /register | Account creation |
+| /dashboard | Document management |
+| /chat/[id] | AI chat interface |
+
+## Local Setup
 ```bash
+git clone https://github.com/yahyahus/docmind-frontend
+cd docmind-frontend
+npm install
+# Create .env.local with NEXT_PUBLIC_API_URL
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

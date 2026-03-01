@@ -16,91 +16,78 @@ interface Conversation {
   document_id: string;
 }
 
+interface Document {
+  id: string;
+  title: string;
+  is_processed: boolean;
+}
+
 export default function Chat() {
   const router = useRouter();
   const params = useParams();
   const convId = params.id as string;
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [document, setDocument] = useState<Document | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    fetchConversation();
-    fetchMessages();
-  }, [convId]);
+  useEffect(() => { fetchAll(); }, [convId]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  async function fetchConversation() {
+  async function fetchAll() {
     try {
-      const response = await api.get(`/conversations/${convId}`);
-      setConversation(response.data);
-    } catch (err) {
-      setError('Conversation not found');
-    }
-  }
+      const [convRes, msgsRes] = await Promise.all([
+        api.get(`/conversations/${convId}`),
+        api.get(`/conversations/${convId}/messages`),
+      ]);
+      setConversation(convRes.data);
+      setMessages(msgsRes.data);
 
-  async function fetchMessages() {
-    try {
-      const response = await api.get(`/conversations/${convId}/messages`);
-      setMessages(response.data);
-    } catch (err) {
-      setError('Failed to load messages');
+      if (convRes.data.document_id) {
+        const docRes = await api.get(`/documents/${convRes.data.document_id}`);
+        setDocument(docRes.data);
+      }
+    } catch {
+      setError('Failed to load conversation.');
     } finally {
       setLoading(false);
     }
   }
 
   async function handleSend() {
-  if (!input.trim() || sending) return;
+    if (!input.trim() || sending) return;
+    const question = input.trim();
+    setInput('');
+    setSending(true);
+    setError('');
 
-  const question = input.trim();
-  setInput('');
-  setSending(true);
-  setError('');
+    const tempId = 'temp-' + Date.now();
+    setMessages(prev => [...prev, {
+      id: tempId, role: 'user', content: question,
+      created_at: new Date().toISOString(),
+    }]);
 
-  const tempId = 'temp-' + Date.now();
-
-  // Add user message immediately
-  setMessages(prev => [...prev, {
-    id: tempId,
-    role: 'user',
-    content: question,
-    created_at: new Date().toISOString(),
-  }]);
-
-  try {
-    // response.data IS the assistant message
-    const response = await api.post(`/conversations/${convId}/chat`, {
-      content: question,
-    });
-
-    // Remove temp user message, add real user + assistant messages
-    setMessages(prev => [
-      ...prev.filter(m => m.id !== tempId),
-      {
-        id: response.data.id + '-user',
-        role: 'user' as const,
-        content: question,
-        created_at: new Date().toISOString(),
-      },
-      response.data
-    ]);
-
-  } catch (err) {
-    setError('AI response failed. The server may be busy — please try again in a moment.');
-    setMessages(prev => prev.filter(m => m.id !== tempId));
-  } finally {
-    setSending(false);
+    try {
+      const response = await api.post(`/conversations/${convId}/chat`, { content: question });
+      setMessages(prev => [
+        ...prev.filter(m => m.id !== tempId),
+        { id: tempId + '-real', role: 'user', content: question, created_at: new Date().toISOString() },
+        response.data,
+      ]);
+    } catch {
+      setError('AI response failed. Please try again.');
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+    } finally {
+      setSending(false);
+      textareaRef.current?.focus();
+    }
   }
-}
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -109,61 +96,132 @@ export default function Chat() {
     }
   }
 
+  // Auto-resize textarea
+  function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+  }
+
+  const S = {
+    page: { height: '100vh', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
+    header: {
+      borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
+      padding: '0 24px', height: '56px', display: 'flex', alignItems: 'center',
+      justifyContent: 'space-between', flexShrink: 0,
+    },
+    messages: { flex: 1, overflowY: 'auto' as const, padding: '32px 24px' },
+    msgWrap: (role: string) => ({
+      display: 'flex', justifyContent: role === 'user' ? 'flex-end' : 'flex-start',
+      marginBottom: '16px',
+    }),
+    bubble: (role: string) => ({
+      maxWidth: '72%', padding: '12px 16px',
+      borderRadius: role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+      background: role === 'user' ? 'linear-gradient(135deg, #6366F1, #818CF8)' : 'var(--bg-elevated)',
+      border: role === 'user' ? 'none' : '1px solid var(--border)',
+      color: 'var(--text-primary)', fontSize: '14px', lineHeight: '1.6',
+      whiteSpace: 'pre-wrap' as const,
+    }),
+    inputArea: {
+      borderTop: '1px solid var(--border)', background: 'var(--bg-surface)',
+      padding: '16px 24px', flexShrink: 0,
+    },
+    inputWrap: {
+      maxWidth: '800px', margin: '0 auto',
+      display: 'flex', gap: '12px', alignItems: 'flex-end',
+    },
+    textarea: {
+      flex: 1, background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+      borderRadius: '12px', padding: '12px 16px', color: 'var(--text-primary)',
+      fontSize: '14px', outline: 'none', resize: 'none' as const,
+      lineHeight: '1.5', minHeight: '48px', maxHeight: '160px',
+      transition: 'border-color 0.2s', fontFamily: 'DM Sans, sans-serif',
+    },
+    sendBtn: (active: boolean) => ({
+      background: active ? 'linear-gradient(135deg, #6366F1, #818CF8)' : 'var(--bg-elevated)',
+      border: active ? 'none' : '1px solid var(--border)',
+      borderRadius: '10px', padding: '12px 20px', color: active ? 'white' : 'var(--text-muted)',
+      fontSize: '13px', fontWeight: 600, cursor: active ? 'pointer' : 'not-allowed',
+      transition: 'all 0.2s', flexShrink: 0, height: '48px',
+    }),
+  };
+
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col">
+    <div style={S.page}>
       {/* Header */}
-      <div className="border-b border-gray-800 bg-gray-900 shrink-0">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
+      <header style={S.header}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button onClick={() => router.push('/dashboard')} style={{
+            background: 'none', border: 'none', color: 'var(--text-secondary)',
+            cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px',
+          }}>
             ← Back
           </button>
-          <h1 className="text-white font-medium truncate">
-            {conversation?.title || 'Loading...'}
-          </h1>
+          <div style={{ width: '1px', height: '16px', background: 'var(--border)' }} />
+          <div>
+            <div className="font-mono" style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+              {document?.title || conversation?.title || 'Loading...'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '1px' }}>
+              AI Document Chat
+            </div>
+          </div>
         </div>
-      </div>
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          {messages.length} message{messages.length !== 1 ? 's' : ''}
+        </div>
+      </header>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+      <div style={S.messages}>
+        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
           {loading ? (
-            <div className="text-gray-400 text-center py-20">Loading...</div>
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 0', fontSize: '14px' }}>
+              Loading conversation...
+            </div>
           ) : messages.length === 0 ? (
-            <div className="text-center py-20">
-              <p className="text-gray-500 text-lg">No messages yet</p>
-              <p className="text-gray-600 mt-2 text-sm">
-                Ask a question about your document
-              </p>
+            <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+              <div style={{ fontSize: '40px', marginBottom: '16px' }}>◈</div>
+              <div className="font-mono" style={{ fontSize: '18px', color: 'var(--text-primary)', marginBottom: '8px' }}>
+                Ready to explore
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--text-muted)', maxWidth: '360px', margin: '0 auto', lineHeight: '1.6' }}>
+                Ask any question about <strong style={{ color: 'var(--text-secondary)' }}>{document?.title}</strong> and I&apos;ll find the answer from the document.
+              </div>
+              <div style={{ marginTop: '32px', display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' as const }}>
+                {['Summarize this document', 'What are the main topics?', 'What are the key conclusions?'].map(q => (
+                  <button key={q} onClick={() => setInput(q)} style={{
+                    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                    borderRadius: '20px', padding: '8px 16px',
+                    color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white rounded-br-sm'
-                      : 'bg-gray-800 text-gray-100 rounded-bl-sm'
-                  }`}
-                >
-                  {msg.content}
+            <div className="animate-fade-in">
+              {messages.map((msg) => (
+                <div key={msg.id} style={S.msgWrap(msg.role)}>
+                  <div style={S.bubble(msg.role)}>{msg.content}</div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
 
           {sending && (
-            <div className="flex justify-start">
-              <div className="bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
-                <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div style={S.msgWrap('assistant')}>
+              <div style={{ ...S.bubble('assistant'), padding: '16px' }}>
+                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
                 </div>
               </div>
             </div>
@@ -174,32 +232,30 @@ export default function Chat() {
       </div>
 
       {/* Input */}
-      <div className="border-t border-gray-800 bg-gray-900 shrink-0">
-        <div className="max-w-3xl mx-auto px-6 py-4">
-          {error && (
-            <div className="text-red-400 text-sm mb-3">{error}</div>
-          )}
-          <div className="flex gap-3">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask a question about your document..."
-              rows={1}
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors resize-none"
-            />
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={sending || !input.trim()}
-              className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 text-white px-5 rounded-xl transition-colors font-medium"
-            >
-              Send
-            </button>
+      <div style={S.inputArea}>
+        {error && (
+          <div style={{ maxWidth: '800px', margin: '0 auto 12px', color: 'var(--danger)', fontSize: '13px' }}>
+            {error}
           </div>
-          <p className="text-gray-600 text-xs mt-2">
-            Press Enter to send, Shift+Enter for new line
-          </p>
+        )}
+        <div style={S.inputWrap}>
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask a question about your document..."
+            rows={1}
+            style={S.textarea}
+            onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'}
+          />
+          <button type="button" onClick={handleSend} disabled={sending || !input.trim()} style={S.sendBtn(!sending && !!input.trim())}>
+            {sending ? '...' : 'Send'}
+          </button>
+        </div>
+        <div style={{ maxWidth: '800px', margin: '8px auto 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+          Enter to send · Shift+Enter for new line
         </div>
       </div>
     </div>
