@@ -61,33 +61,91 @@ export default function Chat() {
   }
 
   async function handleSend() {
-    if (!input.trim() || sending) return;
-    const question = input.trim();
-    setInput('');
-    setSending(true);
-    setError('');
+  if (!input.trim() || sending) return;
+  const question = input.trim();
+  setInput('');
+  setSending(true);
+  setError('');
 
-    const tempId = 'temp-' + Date.now();
-    setMessages(prev => [...prev, {
-      id: tempId, role: 'user', content: question,
-      created_at: new Date().toISOString(),
-    }]);
+  const tempId = 'temp-' + Date.now();
+  const assistantId = 'stream-' + Date.now();
 
-    try {
-      const response = await api.post(`/conversations/${convId}/chat`, { content: question });
-      setMessages(prev => [
-        ...prev.filter(m => m.id !== tempId),
-        { id: tempId + '-real', role: 'user', content: question, created_at: new Date().toISOString() },
-        response.data,
-      ]);
-    } catch {
-      setError('AI response failed. Please try again.');
-      setMessages(prev => prev.filter(m => m.id !== tempId));
-    } finally {
-      setSending(false);
-      textareaRef.current?.focus();
+  // Add user message immediately
+  setMessages(prev => [...prev, {
+    id: tempId,
+    role: 'user',
+    content: question,
+    created_at: new Date().toISOString(),
+  }]);
+
+  // Add empty assistant message that we'll fill in
+  setMessages(prev => [...prev, {
+    id: assistantId,
+    role: 'assistant',
+    content: '',
+    created_at: new Date().toISOString(),
+  }]);
+
+  try {
+    const token = document.cookie
+      .split('; ')
+      .find(row => row.startsWith('token='))
+      ?.split('=')[1];
+
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/conversations/${convId}/chat/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: question }),
+      }
+    );
+
+    if (!response.ok) throw new Error('Stream failed');
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.content) {
+            setMessages(prev => prev.map(m =>
+              m.id === assistantId
+                ? { ...m, content: m.content + data.content }
+                : m
+            ));
+          }
+          if (data.done) {
+            setMessages(prev => prev.map(m =>
+              m.id === assistantId ? { ...m, id: data.id } : m
+            ));
+          }
+          if (data.error) throw new Error(data.error);
+        } catch { /* skip malformed lines */ }
+      }
     }
+  } catch {
+    setError('AI response failed. Please try again.');
+    setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== assistantId));
+  } finally {
+    setSending(false);
+    textareaRef.current?.focus();
   }
+}
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
