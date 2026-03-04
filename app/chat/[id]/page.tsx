@@ -87,10 +87,9 @@ export default function Chat() {
   }]);
 
   try {
-    const token = document.cookie
-      .split('; ')
-      .find(row => row.startsWith('token='))
-      ?.split('=')[1];
+    const token = typeof window !== 'undefined'
+  ? document.cookie.split('; ').find(row => row.startsWith('token='))?.split('=')[1]
+  : '';
 
     const response = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/conversations/${convId}/chat/stream`,
