@@ -295,6 +295,9 @@ export default function Dashboard() {
           <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
             {documents.length} document{documents.length !== 1 ? 's' : ''}
           </span>
+          <button onClick={() => router.push('/profile')} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer' }}>
+            Profile
+          </button>
           <button onClick={handleLogout} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer' }}>
             Sign out
           </button>
