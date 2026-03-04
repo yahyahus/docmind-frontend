@@ -14,9 +14,10 @@ interface Conversation {
   id: string;
   title: string;
   document_id: string;
+  document_ids: string[];
 }
 
-interface Document {
+interface Doc {
   id: string;
   title: string;
   is_processed: boolean;
@@ -28,7 +29,7 @@ export default function Chat() {
   const convId = params.id as string;
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [document, setDocument] = useState<Document | null>(null);
+  const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -46,12 +47,18 @@ export default function Chat() {
         api.get(`/conversations/${convId}`),
         api.get(`/conversations/${convId}/messages`),
       ]);
-      setConversation(convRes.data);
+      const conv = convRes.data;
+      setConversation(conv);
       setMessages(msgsRes.data);
 
-      if (convRes.data.document_id) {
-        const docRes = await api.get(`/documents/${convRes.data.document_id}`);
-        setDocument(docRes.data);
+      // Load all linked documents
+      const docIds: string[] = conv.document_ids?.length
+        ? conv.document_ids
+        : conv.document_id ? [conv.document_id] : [];
+
+      if (docIds.length > 0) {
+        const docResults = await Promise.all(docIds.map((id: string) => api.get(`/documents/${id}`)));
+        setDocs(docResults.map(r => r.data));
       }
     } catch {
       setError('Failed to load conversation.');
@@ -61,90 +68,82 @@ export default function Chat() {
   }
 
   async function handleSend() {
-  if (!input.trim() || sending) return;
-  const question = input.trim();
-  setInput('');
-  setSending(true);
-  setError('');
+    if (!input.trim() || sending) return;
+    const question = input.trim();
+    setInput('');
+    setSending(true);
+    setError('');
 
-  const tempId = 'temp-' + Date.now();
-  const assistantId = 'stream-' + Date.now();
+    const tempId = 'temp-' + Date.now();
+    const assistantId = 'stream-' + Date.now();
 
-  // Add user message immediately
-  setMessages(prev => [...prev, {
-    id: tempId,
-    role: 'user',
-    content: question,
-    created_at: new Date().toISOString(),
-  }]);
+    setMessages(prev => [...prev, {
+      id: tempId, role: 'user', content: question,
+      created_at: new Date().toISOString(),
+    }]);
 
-  // Add empty assistant message that we'll fill in
-  setMessages(prev => [...prev, {
-    id: assistantId,
-    role: 'assistant',
-    content: '',
-    created_at: new Date().toISOString(),
-  }]);
+    setMessages(prev => [...prev, {
+      id: assistantId, role: 'assistant', content: '',
+      created_at: new Date().toISOString(),
+    }]);
 
-  try {
-    const token = typeof window !== 'undefined'
-  ? window.document.cookie.split('; ').find(row => row.startsWith('token='))?.split('=')[1]
-  : '';
+    try {
+      const token = typeof window !== 'undefined'
+        ? window.document.cookie.split('; ').find(row => row.startsWith('token='))?.split('=')[1]
+        : '';
 
-    const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/conversations/${convId}/chat/stream`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ content: question }),
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/conversations/${convId}/chat/stream`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ content: question }),
+        }
+      );
+
+      if (!response.ok) throw new Error('Stream failed');
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.content) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId ? { ...m, content: m.content + data.content } : m
+              ));
+            }
+            if (data.done) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId ? { ...m, id: data.id } : m
+              ));
+            }
+            if (data.error) throw new Error(data.error);
+          } catch { /* skip malformed lines */ }
+        }
       }
-    );
-
-    if (!response.ok) throw new Error('Stream failed');
-
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (data.content) {
-            setMessages(prev => prev.map(m =>
-              m.id === assistantId
-                ? { ...m, content: m.content + data.content }
-                : m
-            ));
-          }
-          if (data.done) {
-            setMessages(prev => prev.map(m =>
-              m.id === assistantId ? { ...m, id: data.id } : m
-            ));
-          }
-          if (data.error) throw new Error(data.error);
-        } catch { /* skip malformed lines */ }
-      }
+    } catch {
+      setError('AI response failed. Please try again.');
+      setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== assistantId));
+    } finally {
+      setSending(false);
+      textareaRef.current?.focus();
     }
-  } catch {
-    setError('AI response failed. Please try again.');
-    setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== assistantId));
-  } finally {
-    setSending(false);
-    textareaRef.current?.focus();
   }
-}
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -153,12 +152,19 @@ export default function Chat() {
     }
   }
 
-  // Auto-resize textarea
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
   }
+
+  const isMulti = docs.length > 1;
+  const headerTitle = isMulti
+    ? `${docs.length} documents`
+    : docs[0]?.title || conversation?.title || 'Loading...';
+  const headerSub = isMulti
+    ? docs.map(d => d.title).join(' · ')
+    : 'AI Document Chat';
 
   const S = {
     page: { height: '100vh', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
@@ -218,15 +224,29 @@ export default function Chat() {
           <div style={{ width: '1px', height: '16px', background: 'var(--border)' }} />
           <div>
             <div className="font-mono" style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
-              {document?.title || conversation?.title || 'Loading...'}
+              {headerTitle}
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '1px' }}>
-              AI Document Chat
+            <div style={{
+              fontSize: '11px', color: 'var(--text-muted)', marginTop: '1px',
+              maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {headerSub}
             </div>
           </div>
         </div>
-        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          {messages.length} message{messages.length !== 1 ? 's' : ''}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {isMulti && (
+            <span style={{
+              background: '#34D39915', border: '1px solid #34D39930',
+              borderRadius: '6px', padding: '4px 10px',
+              color: 'var(--success)', fontSize: '11px', fontWeight: 500,
+            }}>
+              {docs.length} docs
+            </span>
+          )}
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            {messages.length} message{messages.length !== 1 ? 's' : ''}
+          </div>
         </div>
       </header>
 
@@ -239,23 +259,35 @@ export default function Chat() {
             </div>
           ) : messages.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-              <div style={{ fontSize: '40px', marginBottom: '16px' }}>◈</div>
+              <div style={{ fontSize: '40px', marginBottom: '16px' }}>{isMulti ? '🗂️' : '◈'}</div>
               <div className="font-mono" style={{ fontSize: '18px', color: 'var(--text-primary)', marginBottom: '8px' }}>
                 Ready to explore
               </div>
-              <div style={{ fontSize: '14px', color: 'var(--text-muted)', maxWidth: '360px', margin: '0 auto', lineHeight: '1.6' }}>
-                Ask any question about <strong style={{ color: 'var(--text-secondary)' }}>{document?.title}</strong> and I&apos;ll find the answer from the document.
+              <div style={{ fontSize: '14px', color: 'var(--text-muted)', maxWidth: '400px', margin: '0 auto', lineHeight: '1.6' }}>
+                {isMulti
+                  ? `Ask questions across ${docs.map(d => d.title).join(', ')}`
+                  : <>Ask anything about <strong style={{ color: 'var(--text-secondary)' }}>{docs[0]?.title}</strong></>
+                }
               </div>
               <div style={{ marginTop: '32px', display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' as const }}>
-                {['Summarize this document', 'What are the main topics?', 'What are the key conclusions?'].map(q => (
+                {(isMulti
+                  ? ['What do these documents have in common?', 'Summarize each document', 'Compare the main topics']
+                  : ['Summarize this document', 'What are the main topics?', 'What are the key conclusions?']
+                ).map(q => (
                   <button key={q} onClick={() => setInput(q)} style={{
                     background: 'var(--bg-elevated)', border: '1px solid var(--border)',
                     borderRadius: '20px', padding: '8px 16px',
                     color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer',
                     transition: 'all 0.2s',
                   }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)';
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+                    }}
                   >
                     {q}
                   </button>
@@ -266,24 +298,19 @@ export default function Chat() {
             <div className="animate-fade-in">
               {messages.map((msg) => (
                 <div key={msg.id} style={S.msgWrap(msg.role)}>
-                  <div style={S.bubble(msg.role)}>{msg.content}</div>
+                  <div style={S.bubble(msg.role)}>
+                    {msg.content || (msg.role === 'assistant' && sending ? (
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                        <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                        <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                        <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                      </div>
+                    ) : null)}
+                  </div>
                 </div>
               ))}
             </div>
           )}
-
-          {sending && (
-            <div style={S.msgWrap('assistant')}>
-              <div style={{ ...S.bubble('assistant'), padding: '16px' }}>
-                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
-                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
-                  <span className="dot-bounce" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
-                </div>
-              </div>
-            </div>
-          )}
-
           <div ref={bottomRef} />
         </div>
       </div>
@@ -301,7 +328,7 @@ export default function Chat() {
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your document..."
+            placeholder={isMulti ? 'Ask a question across all documents...' : 'Ask a question about your document...'}
             rows={1}
             style={S.textarea}
             onFocus={e => e.target.style.borderColor = 'var(--accent)'}

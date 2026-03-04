@@ -17,6 +17,7 @@ interface Document {
 interface Conversation {
   id: string;
   document_id: string;
+  document_ids: string[];
   title: string;
   updated_at: string;
 }
@@ -33,6 +34,8 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'documents' | 'conversations'>('documents');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [multiChatMode, setMultiChatMode] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
 
   useEffect(() => {
     wakeUpBackend();
@@ -91,7 +94,10 @@ export default function Dashboard() {
 
   async function handleChat(docId: string) {
     try {
-      const existing = conversations.find(c => c.document_id === docId);
+      const existing = conversations.find(c =>
+        c.document_ids?.length === 1 && c.document_ids[0] === docId ||
+        (!c.document_ids?.length && c.document_id === docId)
+      );
       if (existing) {
         router.push(`/chat/${existing.id}`);
       } else {
@@ -104,6 +110,22 @@ export default function Dashboard() {
       }
     } catch {
       setError('Failed to open chat.');
+    }
+  }
+
+  async function handleMultiChat() {
+    if (selectedDocs.length < 2) return;
+    try {
+      const titles = selectedDocs
+        .map(id => documents.find(d => d.id === id)?.title || 'doc')
+        .join(', ');
+      const res = await api.post('/conversations', {
+        title: `Multi: ${titles.slice(0, 50)}`,
+        document_ids: selectedDocs,
+      });
+      router.push(`/chat/${res.data.id}`);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to create multi-document chat.');
     }
   }
 
@@ -147,6 +169,24 @@ export default function Dashboard() {
 
   function formatDate(dateStr: string) {
     return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function toggleDocSelection(docId: string) {
+    setSelectedDocs(prev =>
+      prev.includes(docId) ? prev.filter(id => id !== docId) : [...prev, docId]
+    );
+  }
+
+  function getConvTitle(conv: Conversation) {
+    if (conv.document_ids?.length > 1) {
+      const titles = conv.document_ids
+        .map(id => documents.find(d => d.id === id)?.title)
+        .filter(Boolean)
+        .join(' · ');
+      return titles || conv.title;
+    }
+    const doc = documents.find(d => d.id === (conv.document_ids?.[0] || conv.document_id));
+    return doc?.title || conv.title;
   }
 
   const filteredDocs = documents.filter(d =>
@@ -199,7 +239,6 @@ export default function Dashboard() {
       background: active ? 'var(--bg-elevated)' : 'transparent',
       color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
     }),
-    // KEY FIX: alignItems flex-start so summary can expand card height
     card: {
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
       borderRadius: '12px', padding: '18px 20px',
@@ -316,6 +355,41 @@ export default function Dashboard() {
           </button>
         </div>
 
+        {/* Multi-doc toolbar */}
+        {activeTab === 'documents' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+            <button
+              onClick={() => { setMultiChatMode(!multiChatMode); setSelectedDocs([]); }}
+              style={{
+                background: multiChatMode ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                border: `1px solid ${multiChatMode ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: '7px', padding: '7px 14px',
+                color: multiChatMode ? 'var(--accent-bright)' : 'var(--text-secondary)',
+                fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              {multiChatMode ? '✕ Cancel' : '⊕ Multi-doc chat'}
+            </button>
+            {multiChatMode && selectedDocs.length >= 2 && (
+              <button
+                onClick={handleMultiChat}
+                style={{
+                  background: 'linear-gradient(135deg, #6366F1, #818CF8)',
+                  border: 'none', borderRadius: '7px', padding: '7px 16px',
+                  color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Chat with {selectedDocs.length} docs →
+              </button>
+            )}
+            {multiChatMode && selectedDocs.length < 2 && (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Select 2+ processed documents
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Content */}
         {loading ? (
           <div style={S.emptyState}>
@@ -331,103 +405,119 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="animate-fade-in">
-              {filteredDocs.map((doc) => (
-                <div key={doc.id} style={S.card}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)';
-                    (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)';
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)';
-                    (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
-                  }}
-                >
-                  {/* Left: icon + info */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
-                    <div style={S.fileIcon(doc.file_type || 'txt')}>
-                      {doc.file_type || 'txt'}
-                    </div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      {editingId === doc.id ? (
+              {filteredDocs.map((doc) => {
+                const isSelected = selectedDocs.includes(doc.id);
+                return (
+                  <div key={doc.id}
+                    style={{
+                      ...S.card,
+                      borderColor: isSelected ? 'var(--accent)' : 'var(--border)',
+                      background: isSelected ? 'var(--accent-dim)' : 'var(--bg-surface)',
+                    }}
+                    onMouseEnter={e => {
+                      if (!isSelected) {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)';
+                        (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)';
+                      }
+                    }}
+                    onMouseLeave={e => {
+                      if (!isSelected) {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)';
+                        (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
+                      }
+                    }}
+                  >
+                    {/* Left: checkbox (multi mode) + icon + info */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
+                      {multiChatMode && (
                         <input
-                          autoFocus
-                          value={editingTitle}
-                          onChange={e => setEditingTitle(e.target.value)}
-                          onBlur={() => handleRename(doc.id)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') handleRename(doc.id);
-                            if (e.key === 'Escape') setEditingId(null);
-                          }}
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={!doc.is_processed}
+                          onChange={() => doc.is_processed && toggleDocSelection(doc.id)}
                           style={{
-                            background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                            borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)',
-                            fontSize: '14px', outline: 'none', width: '240px',
+                            marginTop: '10px', accentColor: 'var(--accent)',
+                            width: '16px', height: '16px', flexShrink: 0,
+                            cursor: doc.is_processed ? 'pointer' : 'not-allowed',
                           }}
                         />
-                      ) : (
-                        <div
-                          style={{
-                            fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)',
-                            cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}
-                          onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
-                          title="Double-click to rename"
-                        >
-                          {doc.title}
-                        </div>
                       )}
+                      <div style={S.fileIcon(doc.file_type || 'txt')}>
+                        {doc.file_type || 'txt'}
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {editingId === doc.id ? (
+                          <input
+                            autoFocus
+                            value={editingTitle}
+                            onChange={e => setEditingTitle(e.target.value)}
+                            onBlur={() => handleRename(doc.id)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') handleRename(doc.id);
+                              if (e.key === 'Escape') setEditingId(null);
+                            }}
+                            style={{
+                              background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
+                              borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)',
+                              fontSize: '14px', outline: 'none', width: '240px',
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)',
+                              cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                            onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
+                            title="Double-click to rename"
+                          >
+                            {doc.title}
+                          </div>
+                        )}
 
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        {formatDate(doc.created_at)}
-                        {doc.is_processed && (
-                          <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          {formatDate(doc.created_at)}
+                          {doc.is_processed && (
+                            <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>
+                          )}
+                        </div>
+
+                        {doc.summary && (
+                          <div style={{
+                            fontSize: '12px', color: 'var(--text-secondary)',
+                            marginTop: '8px', lineHeight: '1.6',
+                            overflow: 'hidden', display: '-webkit-box',
+                            WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
+                          }}>
+                            {doc.summary}
+                          </div>
                         )}
                       </div>
-
-                      {/* Summary — only shows when present */}
-                      {doc.summary && (
-                        <div style={{
-                          fontSize: '12px', color: 'var(--text-secondary)',
-                          marginTop: '8px', lineHeight: '1.6',
-                          overflow: 'hidden', display: '-webkit-box',
-                          WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
-                        }}>
-                          {doc.summary}
-                        </div>
-                      )}
                     </div>
-                  </div>
 
-                  {/* Right: action buttons — marginTop: 2 keeps them visually aligned to top */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
-                    {!doc.is_processed && (
-                      <button
-                        onClick={() => handleProcess(doc.id)}
-                        disabled={processing === doc.id}
-                        style={S.btnProcess}
-                      >
-                        {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
-                      </button>
+                    {/* Right: action buttons */}
+                    {!multiChatMode && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
+                        {!doc.is_processed && (
+                          <button onClick={() => handleProcess(doc.id)} disabled={processing === doc.id} style={S.btnProcess}>
+                            {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
+                          </button>
+                        )}
+                        <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>
+                          Chat →
+                        </button>
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          style={S.btnDelete}
+                          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
+                          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
+                          title="Delete document"
+                        >×</button>
+                      </div>
                     )}
-                    <button
-                      onClick={() => handleChat(doc.id)}
-                      disabled={!doc.is_processed}
-                      style={S.btnChat(doc.is_processed)}
-                    >
-                      Chat →
-                    </button>
-                    <button
-                      onClick={() => handleDelete(doc.id)}
-                      style={S.btnDelete}
-                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
-                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
-                      title="Delete document"
-                    >
-                      ×
-                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )
         ) : (
@@ -440,7 +530,7 @@ export default function Dashboard() {
           ) : (
             <div className="animate-fade-in">
               {filteredConvs.map((conv) => {
-                const doc = documents.find(d => d.id === conv.document_id);
+                const isMulti = conv.document_ids?.length > 1;
                 return (
                   <div key={conv.id} style={S.card}
                     onMouseEnter={e => {
@@ -455,14 +545,18 @@ export default function Dashboard() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
                       <div style={{
                         width: '40px', height: '40px', borderRadius: '8px', flexShrink: 0,
-                        background: 'var(--accent-dim)', border: '1px solid var(--accent-glow)',
+                        background: isMulti ? '#34D39915' : 'var(--accent-dim)',
+                        border: `1px solid ${isMulti ? '#34D39930' : 'var(--accent-glow)'}`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
-                      }}>💬</div>
+                      }}>
+                        {isMulti ? '🗂️' : '💬'}
+                      </div>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {doc?.title || conv.title}
+                          {getConvTitle(conv)}
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                          {isMulti && <span style={{ color: 'var(--success)', marginRight: '8px' }}>● {conv.document_ids.length} docs</span>}
                           Last active {formatDate(conv.updated_at)}
                         </div>
                       </div>
