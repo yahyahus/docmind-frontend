@@ -88,7 +88,7 @@ export default function Chat() {
 
   try {
     const token = typeof window !== 'undefined'
-  ? document.cookie.split('; ').find(row => row.startsWith('token='))?.split('=')[1]
+  ? window.document.cookie.split('; ').find(row => row.startsWith('token='))?.split('=')[1]
   : '';
 
     const response = await fetch(
