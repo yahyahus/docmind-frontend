@@ -36,6 +36,9 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -236,6 +239,33 @@ export default function Chat() {
     }
   }
 
+  async function handleShare() {
+    try {
+      const res = await api.post(`/conversations/${convId}/share`);
+      setShareUrl(res.data.url);
+      setShareOpen(true);
+    } catch {
+      setError('Failed to create share link.');
+    }
+  }
+
+  async function handleRevokeShare() {
+    try {
+      await api.delete(`/conversations/${convId}/share`);
+      setShareUrl(null);
+      setShareOpen(false);
+    } catch {
+      setError('Failed to revoke share link.');
+    }
+  }
+
+  async function handleCopyLink() {
+    if (!shareUrl) return;
+    await navigator.clipboard.writeText(shareUrl);
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2000);
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -339,6 +369,25 @@ export default function Chat() {
             {messages.length} message{messages.length !== 1 ? 's' : ''}
           </div>
           <div style={{ position: 'relative' }}>
+            <button
+              onClick={handleShare}
+              style={{
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                borderRadius: '7px', padding: '6px 12px',
+                color: 'var(--text-secondary)', fontSize: '12px',
+                cursor: 'pointer', transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)';
+                (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+                (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+              }}
+            >
+              ↗ Share
+            </button>
             <button
               onClick={() => setExportOpen(!exportOpen)}
               style={{
@@ -485,6 +534,80 @@ export default function Chat() {
           Enter to send · Shift+Enter for new line
         </div>
       </div>
+      {shareOpen && shareUrl && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 50, padding: '24px',
+        }}
+          onClick={() => setShareOpen(false)}
+        >
+          <div style={{
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '480px',
+          }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="font-mono" style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
+              Share conversation
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+              Anyone with this link can view this conversation in read-only mode.
+            </p>
+
+            {/* Link box */}
+            <div style={{
+              display: 'flex', gap: '8px', marginBottom: '16px',
+            }}>
+              <div style={{
+                flex: 1, background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                borderRadius: '8px', padding: '10px 14px',
+                fontSize: '12px', color: 'var(--text-muted)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                fontFamily: 'DM Mono, monospace',
+              }}>
+                {shareUrl}
+              </div>
+              <button
+                onClick={handleCopyLink}
+                style={{
+                  background: shareCopied ? '#34D39915' : 'linear-gradient(135deg, #6366F1, #818CF8)',
+                  border: shareCopied ? '1px solid #34D39930' : 'none',
+                  borderRadius: '8px', padding: '10px 16px',
+                  color: shareCopied ? 'var(--success)' : 'white',
+                  fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                  transition: 'all 0.2s', whiteSpace: 'nowrap',
+                }}
+              >
+                {shareCopied ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+
+            {/* Revoke + Close */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button
+                onClick={handleRevokeShare}
+                style={{
+                  background: 'none', border: 'none',
+                  color: 'var(--danger)', fontSize: '12px', cursor: 'pointer',
+                }}
+              >
+                Revoke link
+              </button>
+              <button
+                onClick={() => setShareOpen(false)}
+                style={{
+                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  borderRadius: '7px', padding: '8px 16px',
+                  color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer',
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
