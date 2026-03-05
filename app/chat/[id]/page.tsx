@@ -35,11 +35,20 @@ export default function Chat() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { fetchAll(); }, [convId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (exportOpen) setExportOpen(false);
+    }
+    window.document.addEventListener('click', handleClickOutside);
+    return () => window.document.removeEventListener('click', handleClickOutside);
+  }, [exportOpen]);
 
   async function fetchAll() {
     try {
@@ -145,19 +154,76 @@ export default function Chat() {
     }
   }
 
-  async function handleExport() {
+  async function handleExport(format: 'md' | 'txt' | 'pdf') {
     try {
       const res = await api.get(`/conversations/${convId}/export`);
       const { title, markdown } = res.data;
+      const safeName = title.replace(/[^a-z0-9]/gi, '-').toLowerCase();
 
-      // Create and download markdown file
-      const blob = new Blob([markdown], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = window.document.createElement('a');
-      a.href = url;
-      a.download = `${title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
+      if (format === 'md') {
+        const blob = new Blob([markdown], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = window.document.createElement('a');
+        a.href = url;
+        a.download = `${safeName}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+      } else if (format === 'txt') {
+        // Strip markdown formatting for plain text
+        const plain = markdown
+          .replace(/\*\*(.*?)\*\*/g, '$1')   // remove bold
+          .replace(/#{1,6} /g, '')            // remove headings
+          .replace(/\*/g, '');               // remove remaining *
+        const blob = new Blob([plain], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = window.document.createElement('a');
+        a.href = url;
+        a.download = `${safeName}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+      } else if (format === 'pdf') {
+        // Build a simple printable HTML page and trigger browser print-to-PDF
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            body { font-family: Georgia, serif; max-width: 700px; margin: 40px auto; color: #111; line-height: 1.7; }
+            h1 { font-size: 22px; margin-bottom: 4px; }
+            .meta { color: #888; font-size: 13px; margin-bottom: 32px; }
+            .msg { margin-bottom: 20px; }
+            .label { font-weight: bold; font-size: 13px; margin-bottom: 4px; }
+            .user .label { color: #6366F1; }
+            .assistant .label { color: #374151; }
+            .content { font-size: 15px; white-space: pre-wrap; }
+            hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
+          </style>
+        </head>
+        <body>
+          ${markdown
+            .split('\n')
+            .map((line: string) => {
+              if (line.startsWith('# ')) return `<h1>${line.slice(2)}</h1>`;
+              if (line.startsWith('*')) return `<div class="meta">${line.replace(/\*/g, '')}</div>`;
+              if (line.startsWith('**You:**')) return `<div class="msg user"><div class="label">You</div><div class="content">${line.replace('**You:** ', '')}</div></div>`;
+              if (line.startsWith('**DocMind:**')) return `<div class="msg assistant"><div class="label">DocMind</div><div class="content">${line.replace('**DocMind:** ', '')}</div></div>`;
+              return '';
+            })
+            .join('\n')}
+        </body>
+        </html>
+      `;
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(htmlContent);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => printWindow.print(), 500);
+        }
+      }
     } catch {
       setError('Export failed.');
     }
@@ -265,25 +331,58 @@ export default function Chat() {
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             {messages.length} message{messages.length !== 1 ? 's' : ''}
           </div>
-          <button
-            onClick={handleExport}
-            style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: '7px', padding: '6px 12px',
-              color: 'var(--text-secondary)', fontSize: '12px',
-              cursor: 'pointer', transition: 'all 0.2s',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)';
-              (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
-              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
-            }}
-          >
-            ↓ Export
-          </button>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setExportOpen(!exportOpen)}
+              style={{
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                borderRadius: '7px', padding: '6px 12px',
+                color: 'var(--text-secondary)', fontSize: '12px',
+                cursor: 'pointer', transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)';
+                (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+                (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+              }}
+            >
+              ↓ Export
+            </button>
+
+            {exportOpen && (
+              <div style={{
+                position: 'absolute', right: 0, top: '36px', zIndex: 20,
+                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                borderRadius: '10px', padding: '6px', minWidth: '140px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+              }}>
+                {([
+                  { fmt: 'md', label: '📄 Markdown', sub: '.md file' },
+                  { fmt: 'txt', label: '📝 Plain text', sub: '.txt file' },
+                  { fmt: 'pdf', label: '🖨️ PDF', sub: 'print to PDF' },
+                ] as const).map(({ fmt, label, sub }) => (
+                  <button
+                    key={fmt}
+                    onClick={() => { handleExport(fmt); setExportOpen(false); }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      background: 'none', border: 'none', borderRadius: '7px',
+                      padding: '8px 12px', cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-elevated)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = 'none'}
+                  >
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{label}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{sub}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
