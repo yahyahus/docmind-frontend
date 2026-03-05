@@ -184,45 +184,52 @@ export default function Chat() {
         URL.revokeObjectURL(url);
 
       } else if (format === 'pdf') {
-        // Build a simple printable HTML page and trigger browser print-to-PDF
-        const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>${title}</title>
-          <style>
-            body { font-family: Georgia, serif; max-width: 700px; margin: 40px auto; color: #111; line-height: 1.7; }
-            h1 { font-size: 22px; margin-bottom: 4px; }
-            .meta { color: #888; font-size: 13px; margin-bottom: 32px; }
-            .msg { margin-bottom: 20px; }
-            .label { font-weight: bold; font-size: 13px; margin-bottom: 4px; }
-            .user .label { color: #6366F1; }
-            .assistant .label { color: #374151; }
-            .content { font-size: 15px; white-space: pre-wrap; }
-            hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
-          </style>
-        </head>
-        <body>
-          ${markdown
-            .split('\n')
-            .map((line: string) => {
-              if (line.startsWith('# ')) return `<h1>${line.slice(2)}</h1>`;
-              if (line.startsWith('*')) return `<div class="meta">${line.replace(/\*/g, '')}</div>`;
-              if (line.startsWith('**You:**')) return `<div class="msg user"><div class="label">You</div><div class="content">${line.replace('**You:** ', '')}</div></div>`;
-              if (line.startsWith('**DocMind:**')) return `<div class="msg assistant"><div class="label">DocMind</div><div class="content">${line.replace('**DocMind:** ', '')}</div></div>`;
-              return '';
-            })
-            .join('\n')}
-        </body>
-        </html>
-      `;
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          printWindow.document.write(htmlContent);
-          printWindow.document.close();
-          printWindow.focus();
-          setTimeout(() => printWindow.print(), 500);
-        }
+        const { jsPDF } = await import('jspdf');
+        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const margin = 48;
+        const maxWidth = pageWidth - margin * 2;
+        let y = 60;
+
+        // Title
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.text(title, margin, y);
+        y += 28;
+
+        // Meta
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(150);
+        doc.text(`Exported from DocMind — ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`, margin, y);
+        y += 28;
+
+        // Messages
+        messages.forEach((msg) => {
+          if (y > 760) { doc.addPage(); y = 48; }
+
+          // Role label
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(11);
+          doc.setTextColor(msg.role === 'user' ? 99 : 55, msg.role === 'user' ? 102 : 65, msg.role === 'user' ? 241 : 71);
+          doc.text(msg.role === 'user' ? 'You' : 'DocMind', margin, y);
+          y += 16;
+
+          // Message content
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(11);
+          doc.setTextColor(30, 30, 30);
+          const lines = doc.splitTextToSize(msg.content, maxWidth);
+          lines.forEach((line: string) => {
+            if (y > 760) { doc.addPage(); y = 48; }
+            doc.text(line, margin, y);
+            y += 16;
+          });
+
+          y += 12; // spacing between messages
+        });
+
+        doc.save(`${safeName}.pdf`);
       }
     } catch {
       setError('Export failed.');
