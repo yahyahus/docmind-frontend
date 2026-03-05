@@ -144,6 +144,14 @@ export default function Login() {
             >
               {loading ? 'Signing in...' : 'Sign in →'}
             </button>
+            <div style={{ textAlign: 'center', marginTop: '16px' }}>
+              <button onClick={() => router.push('/forgot-password')} style={{
+                background: 'none', border: 'none',
+                color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer',
+              }}>
+                Forgot password?
+              </button>
+            </div>
           </div>
         </div>
 
