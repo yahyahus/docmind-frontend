@@ -2,6 +2,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
+import Cookies from 'js-cookie';
+import { GoogleLogin } from '@react-oauth/google';
 
 export default function Register() {
   const router = useRouter();
@@ -24,6 +26,19 @@ export default function Register() {
       setError(err.response?.data?.detail || 'Registration failed');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleGoogleSuccess(credentialResponse: any) {
+    setError('');
+    try {
+      const res = await api.post('/auth/google', {
+        credential: credentialResponse.credential,
+      });
+      Cookies.set('token', res.data.access_token, { expires: 7 });
+      router.push('/dashboard');
+    } catch {
+      setError('Google sign-in failed. Please try again.');
     }
   }
 
@@ -128,6 +143,26 @@ export default function Register() {
               {loading ? 'Creating account...' : 'Create account →'}
             </button>
           </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '12px', margin: '8px 0',
+        }}>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>or</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+
+        {/* Google Sign-In */}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError('Google sign-in failed.')}
+            theme="filled_black"
+            shape="rectangular"
+            width="320"
+          />
         </div>
 
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginTop: '20px' }}>

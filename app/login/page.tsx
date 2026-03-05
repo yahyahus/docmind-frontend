@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import api from '../../lib/api';
+import { GoogleLogin } from '@react-oauth/google';
 
 export default function Login() {
   const router = useRouter();
@@ -29,6 +30,19 @@ export default function Login() {
       setLoading(false);
     }
   }, [email, password, router]);
+
+  async function handleGoogleSuccess(credentialResponse: any) {
+    setError('');
+    try {
+      const res = await api.post('/auth/google', {
+        credential: credentialResponse.credential,
+      });
+      Cookies.set('token', res.data.access_token, { expires: 7 });
+      router.push('/dashboard');
+    } catch {
+      setError('Google sign-in failed. Please try again.');
+    }
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
@@ -155,6 +169,26 @@ export default function Login() {
           </div>
         </div>
 
+        {/* Divider */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '12px', margin: '8px 0',
+        }}>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>or</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+
+        {/* Google Sign-In */}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError('Google sign-in failed.')}
+            theme="filled_black"
+            shape="rectangular"
+            width="320"
+          />
+        </div>
+        
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginTop: '20px' }}>
           No account?{' '}
           <a href="/register" style={{ color: 'var(--accent-bright)', textDecoration: 'none' }}>
