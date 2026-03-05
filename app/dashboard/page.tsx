@@ -12,6 +12,7 @@ interface Document {
   is_processed: boolean;
   created_at: string;
   summary?: string;
+  tags: string[];
 }
 
 interface Conversation {
@@ -36,6 +37,9 @@ export default function Dashboard() {
   const [editingTitle, setEditingTitle] = useState('');
   const [multiChatMode, setMultiChatMode] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
   useEffect(() => {
     wakeUpBackend();
@@ -162,6 +166,26 @@ export default function Dashboard() {
     }
   }
 
+  async function handleSaveTags(docId: string, tags: string[]) {
+    try {
+      await api.patch(`/documents/${docId}/tags`, { tags });
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, tags } : d));
+    } catch {
+      setError('Failed to save tags.');
+    } finally {
+      setEditingTagsId(null);
+      setTagInput('');
+    }
+  }
+
+  async function handleRemoveTag(docId: string, tagToRemove: string) {
+    const doc = documents.find(d => d.id === docId);
+    if (!doc) return;
+    const newTags = doc.tags.filter(t => t !== tagToRemove);
+    await handleSaveTags(docId, newTags);
+    if (activeTag === tagToRemove) setActiveTag(null);
+  }
+
   function handleLogout() {
     Cookies.remove('token');
     router.push('/login');
@@ -189,9 +213,11 @@ export default function Dashboard() {
     return doc?.title || conv.title;
   }
 
-  const filteredDocs = documents.filter(d =>
-    d.title.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredDocs = documents.filter(d => {
+    const matchesSearch = d.title.toLowerCase().includes(search.toLowerCase());
+    const matchesTag = !activeTag || d.tags?.includes(activeTag);
+    return matchesSearch && matchesTag;
+  });
 
   const filteredConvs = conversations.filter(c => {
     const doc = documents.find(d => d.id === c.document_id);
@@ -374,14 +400,11 @@ export default function Dashboard() {
               {multiChatMode ? '✕ Cancel' : '⊕ Multi-doc chat'}
             </button>
             {multiChatMode && selectedDocs.length >= 2 && (
-              <button
-                onClick={handleMultiChat}
-                style={{
-                  background: 'linear-gradient(135deg, #6366F1, #818CF8)',
-                  border: 'none', borderRadius: '7px', padding: '7px 16px',
-                  color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
+              <button onClick={handleMultiChat} style={{
+                background: 'linear-gradient(135deg, #6366F1, #818CF8)',
+                border: 'none', borderRadius: '7px', padding: '7px 16px',
+                color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+              }}>
                 Chat with {selectedDocs.length} docs →
               </button>
             )}
@@ -390,6 +413,22 @@ export default function Dashboard() {
                 Select 2+ processed documents
               </span>
             )}
+          </div>
+        )}
+
+        {/* Active tag filter indicator */}
+        {activeTag && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Filtered by:</span>
+            <span style={{
+              background: 'var(--accent-dim)', border: '1px solid var(--accent)',
+              borderRadius: '20px', padding: '3px 10px',
+              fontSize: '11px', color: 'var(--accent-bright)',
+            }}>#{activeTag}</span>
+            <button onClick={() => setActiveTag(null)} style={{
+              background: 'none', border: 'none', color: 'var(--text-muted)',
+              fontSize: '12px', cursor: 'pointer',
+            }}>✕ Clear</button>
           </div>
         )}
 
@@ -449,6 +488,7 @@ export default function Dashboard() {
                         {doc.file_type || 'txt'}
                       </div>
                       <div style={{ minWidth: 0, flex: 1 }}>
+                        {/* Title */}
                         {editingId === doc.id ? (
                           <input
                             autoFocus
@@ -478,6 +518,7 @@ export default function Dashboard() {
                           </div>
                         )}
 
+                        {/* Date + status */}
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
                           {formatDate(doc.created_at)}
                           {doc.is_processed && (
@@ -485,6 +526,7 @@ export default function Dashboard() {
                           )}
                         </div>
 
+                        {/* Summary */}
                         {doc.summary && (
                           <div style={{
                             fontSize: '12px', color: 'var(--text-secondary)',
@@ -495,6 +537,69 @@ export default function Dashboard() {
                             {doc.summary}
                           </div>
                         )}
+
+                        {/* Tags */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                          {doc.tags?.map(tag => (
+                            <span key={tag}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                background: activeTag === tag ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                                border: `1px solid ${activeTag === tag ? 'var(--accent)' : 'var(--border)'}`,
+                                borderRadius: '20px', padding: '3px 8px',
+                                fontSize: '11px', color: activeTag === tag ? 'var(--accent-bright)' : 'var(--text-muted)',
+                                cursor: 'pointer', transition: 'all 0.2s',
+                              }}
+                              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                            >
+                              #{tag}
+                              <span
+                                onClick={e => { e.stopPropagation(); handleRemoveTag(doc.id, tag); }}
+                                style={{ fontSize: '10px', opacity: 0.6, lineHeight: 1 }}
+                              >✕</span>
+                            </span>
+                          ))}
+
+                          {/* Tag input / add button */}
+                          {editingTagsId === doc.id ? (
+                            <input
+                              autoFocus
+                              value={tagInput}
+                              onChange={e => setTagInput(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  const newTags = [
+                                    ...(doc.tags || []),
+                                    ...tagInput.split(',').map(t => t.trim()).filter(Boolean),
+                                  ];
+                                  handleSaveTags(doc.id, newTags);
+                                }
+                                if (e.key === 'Escape') { setEditingTagsId(null); setTagInput(''); }
+                              }}
+                              placeholder="tag1, tag2..."
+                              style={{
+                                background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
+                                borderRadius: '20px', padding: '3px 10px',
+                                fontSize: '11px', color: 'var(--text-primary)',
+                                outline: 'none', width: '120px',
+                              }}
+                            />
+                          ) : (
+                            <span
+                              onClick={() => setEditingTagsId(doc.id)}
+                              style={{
+                                background: 'transparent', border: '1px dashed var(--border)',
+                                borderRadius: '20px', padding: '3px 10px',
+                                fontSize: '11px', color: 'var(--text-muted)',
+                                cursor: 'pointer', transition: 'all 0.2s',
+                              }}
+                              onMouseEnter={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--accent)'}
+                              onMouseLeave={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--border)'}
+                            >
+                              + tag
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 

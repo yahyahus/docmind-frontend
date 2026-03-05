@@ -145,6 +145,24 @@ export default function Chat() {
     }
   }
 
+  async function handleExport() {
+    try {
+      const res = await api.get(`/conversations/${convId}/export`);
+      const { title, markdown } = res.data;
+
+      // Create and download markdown file
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = window.document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Export failed.');
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -247,6 +265,25 @@ export default function Chat() {
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             {messages.length} message{messages.length !== 1 ? 's' : ''}
           </div>
+          <button
+            onClick={handleExport}
+            style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: '7px', padding: '6px 12px',
+              color: 'var(--text-secondary)', fontSize: '12px',
+              cursor: 'pointer', transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+            }}
+          >
+            ↓ Export
+          </button>
         </div>
       </header>
 
