@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import api from '../../lib/api';
@@ -23,8 +23,17 @@ interface Conversation {
   updated_at: string;
 }
 
+interface DocVersion {
+  version_number: number;
+  created_at: string;
+  summary: string | null;
+  file_type: string | null;
+}
+
 export default function Dashboard() {
   const router = useRouter();
+  const versionInputRef = useRef<HTMLInputElement>(null);
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +41,9 @@ export default function Dashboard() {
   const [processing, setProcessing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('keyword');
+  const [semanticResults, setSemanticResults] = useState<Document[] | null>(null);
+  const [semanticSearching, setSemanticSearching] = useState(false);
   const [activeTab, setActiveTab] = useState<'documents' | 'conversations'>('documents');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -40,11 +52,24 @@ export default function Dashboard() {
   const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [versioningDocId, setVersioningDocId] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Record<string, DocVersion[]>>({});
+  const [showVersionsId, setShowVersionsId] = useState<string | null>(null);
 
   useEffect(() => {
     wakeUpBackend();
     fetchAll();
   }, []);
+
+  // Debounced semantic search
+  useEffect(() => {
+    if (searchMode !== 'semantic' || !search.trim()) {
+      setSemanticResults(null);
+      return;
+    }
+    const timer = setTimeout(() => runSemanticSearch(search), 500);
+    return () => clearTimeout(timer);
+  }, [search, searchMode]);
 
   async function fetchAll() {
     try {
@@ -60,6 +85,36 @@ export default function Dashboard() {
       setLoading(false);
     }
   }
+
+  async function runSemanticSearch(q: string) {
+    setSemanticSearching(true);
+    try {
+      const res = await api.get('/documents/semantic-search', { params: { q } });
+      setSemanticResults(res.data);
+    } catch {
+      setSemanticResults([]);
+    } finally {
+      setSemanticSearching(false);
+    }
+  }
+
+  const filteredDocs = (() => {
+    if (searchMode === 'semantic' && semanticResults !== null) {
+      if (!activeTag) return semanticResults;
+      return semanticResults.filter(d => d.tags?.includes(activeTag));
+    }
+    return documents.filter(d => {
+      const matchesSearch = d.title.toLowerCase().includes(search.toLowerCase());
+      const matchesTag = !activeTag || d.tags?.includes(activeTag);
+      return matchesSearch && matchesTag;
+    });
+  })();
+
+  const filteredConvs = conversations.filter(c => {
+    const doc = documents.find(d => d.id === c.document_id);
+    return doc?.title.toLowerCase().includes(search.toLowerCase()) ||
+      c.title.toLowerCase().includes(search.toLowerCase());
+  });
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -78,6 +133,52 @@ export default function Dashboard() {
     } finally {
       setUploading(false);
       e.target.value = '';
+    }
+  }
+
+  async function handleVersionUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !versioningDocId) return;
+    e.target.value = '';
+    const docId = versioningDocId;
+    setVersioningDocId(null);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post(`/documents/${docId}/version`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setDocuments(prev => prev.map(d => d.id === docId ? res.data : d));
+      // Auto-process the new version
+      setProcessing(docId);
+      await api.post(`/documents/${docId}/process`);
+      const docsRes = await api.get('/documents');
+      setDocuments([...docsRes.data]);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Version upload failed.');
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  async function fetchVersions(docId: string) {
+    try {
+      const res = await api.get(`/documents/${docId}/versions`);
+      setVersions(prev => ({ ...prev, [docId]: res.data.versions }));
+      setShowVersionsId(docId);
+    } catch {
+      setError('Failed to load version history.');
+    }
+  }
+
+  async function handleRestoreVersion(docId: string, versionNumber: number) {
+    try {
+      await api.post(`/documents/${docId}/versions/${versionNumber}/restore`);
+      setShowVersionsId(null);
+      await fetchAll();
+    } catch {
+      setError('Restore failed.');
     }
   }
 
@@ -213,18 +314,6 @@ export default function Dashboard() {
     return doc?.title || conv.title;
   }
 
-  const filteredDocs = documents.filter(d => {
-    const matchesSearch = d.title.toLowerCase().includes(search.toLowerCase());
-    const matchesTag = !activeTag || d.tags?.includes(activeTag);
-    return matchesSearch && matchesTag;
-  });
-
-  const filteredConvs = conversations.filter(c => {
-    const doc = documents.find(d => d.id === c.document_id);
-    return doc?.title.toLowerCase().includes(search.toLowerCase()) ||
-      c.title.toLowerCase().includes(search.toLowerCase());
-  });
-
   const S = {
     page: { minHeight: '100vh', display: 'flex', flexDirection: 'column' as const },
     header: {
@@ -247,13 +336,6 @@ export default function Dashboard() {
       color: 'white', fontSize: '13px', fontWeight: 600,
       cursor: 'pointer', transition: 'opacity 0.2s',
     },
-    searchBar: {
-      width: '100%', background: 'var(--bg-surface)',
-      border: '1px solid var(--border)', borderRadius: '10px',
-      padding: '12px 16px', color: 'var(--text-primary)',
-      fontSize: '14px', outline: 'none', marginBottom: '24px',
-      transition: 'border-color 0.2s',
-    },
     tabs: {
       display: 'flex', gap: '4px', marginBottom: '24px',
       background: 'var(--bg-surface)', borderRadius: '10px',
@@ -268,7 +350,6 @@ export default function Dashboard() {
     card: {
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
       borderRadius: '12px', padding: '18px 20px',
-      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
       transition: 'border-color 0.2s, background 0.2s',
       marginBottom: '8px',
     },
@@ -295,6 +376,14 @@ export default function Dashboard() {
       fontSize: '12px', fontWeight: 600,
       cursor: enabled ? 'pointer' : 'not-allowed', transition: 'all 0.2s',
     }),
+    btnIcon: (active = false) => ({
+      background: active ? 'var(--accent-dim)' : 'transparent',
+      border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+      borderRadius: '6px', padding: '5px 8px',
+      color: active ? 'var(--accent-bright)' : 'var(--text-muted)',
+      fontSize: '12px', cursor: 'pointer',
+      transition: 'all 0.2s', whiteSpace: 'nowrap' as const,
+    }),
     btnDelete: {
       background: 'transparent', border: 'none',
       color: 'var(--text-muted)', fontSize: '16px',
@@ -309,6 +398,15 @@ export default function Dashboard() {
 
   return (
     <div style={S.page}>
+      {/* Hidden input for version uploads — triggered programmatically */}
+      <input
+        ref={versionInputRef}
+        type="file"
+        accept=".pdf,.txt"
+        style={{ display: 'none' }}
+        onChange={handleVersionUpload}
+      />
+
       {/* Header */}
       <header style={S.header}>
         <div style={S.logo}>
@@ -363,19 +461,57 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Search */}
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search documents..."
-          style={S.searchBar}
-          onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-          onBlur={e => e.target.style.borderColor = 'var(--border)'}
-        />
+        {/* Search bar + keyword/semantic toggle */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={searchMode === 'semantic' ? 'Search by meaning...' : 'Search documents...'}
+              style={{
+                width: '100%', background: 'var(--bg-surface)',
+                border: '1px solid var(--border)', borderRadius: '10px',
+                padding: '12px 16px', color: 'var(--text-primary)',
+                fontSize: '14px', outline: 'none', boxSizing: 'border-box',
+                transition: 'border-color 0.2s',
+              }}
+              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
+            />
+            {semanticSearching && (
+              <span style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                searching…
+              </span>
+            )}
+          </div>
+          {/* Mode toggle */}
+          <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden', flexShrink: 0 }}>
+            {(['keyword', 'semantic'] as const).map(mode => (
+              <button key={mode}
+                onClick={() => { setSearchMode(mode); setSemanticResults(null); setSearch(''); }}
+                style={{
+                  padding: '10px 14px', border: 'none',
+                  background: searchMode === mode ? 'var(--accent-dim)' : 'transparent',
+                  color: searchMode === mode ? 'var(--accent-bright)' : 'var(--text-muted)',
+                  fontSize: '12px', fontWeight: searchMode === mode ? 600 : 400,
+                  cursor: 'pointer', fontFamily: 'DM Mono, monospace',
+                  letterSpacing: '0.03em', transition: 'all 0.2s',
+                }}
+              >
+                {mode === 'keyword' ? '🔤' : '🧠'} {mode}
+              </button>
+            ))}
+          </div>
+        </div>
+        {searchMode === 'semantic' && !search && (
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+            Finds documents by meaning — try "machine learning results" or "financial performance"
+          </p>
+        )}
 
         {/* Tabs */}
-        <div style={S.tabs}>
+        <div style={{ ...S.tabs, marginTop: '16px' }}>
           <button style={S.tab(activeTab === 'documents')} onClick={() => setActiveTab('documents')}>
             Documents ({documents.length})
           </button>
@@ -442,13 +578,22 @@ export default function Dashboard() {
           filteredDocs.length === 0 ? (
             <div style={S.emptyState}>
               <div style={{ fontSize: '32px', marginBottom: '16px' }}>◈</div>
-              <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>No documents yet</div>
-              <div style={{ fontSize: '13px' }}>Upload a PDF or TXT file to get started</div>
+              <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                {searchMode === 'semantic' && search ? 'No semantic matches found.' : 'No documents yet'}
+              </div>
+              <div style={{ fontSize: '13px' }}>
+                {searchMode === 'semantic' && search
+                  ? 'Try different keywords or switch to keyword search.'
+                  : 'Upload a PDF or TXT file to get started'}
+              </div>
             </div>
           ) : (
             <div className="animate-fade-in">
               {filteredDocs.map((doc) => {
                 const isSelected = selectedDocs.includes(doc.id);
+                const showingVersions = showVersionsId === doc.id;
+                const docVersions = versions[doc.id];
+
                 return (
                   <div key={doc.id}
                     style={{
@@ -469,158 +614,222 @@ export default function Dashboard() {
                       }
                     }}
                   >
-                    {/* Left: checkbox (multi mode) + icon + info */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
-                      {multiChatMode && (
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={!doc.is_processed}
-                          onChange={() => doc.is_processed && toggleDocSelection(doc.id)}
-                          style={{
-                            marginTop: '10px', accentColor: 'var(--accent)',
-                            width: '16px', height: '16px', flexShrink: 0,
-                            cursor: doc.is_processed ? 'pointer' : 'not-allowed',
-                          }}
-                        />
-                      )}
-                      <div style={S.fileIcon(doc.file_type || 'txt')}>
-                        {doc.file_type || 'txt'}
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        {/* Title */}
-                        {editingId === doc.id ? (
+                    {/* Main row */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      {/* Left: checkbox (multi mode) + icon + info */}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
+                        {multiChatMode && (
                           <input
-                            autoFocus
-                            value={editingTitle}
-                            onChange={e => setEditingTitle(e.target.value)}
-                            onBlur={() => handleRename(doc.id)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') handleRename(doc.id);
-                              if (e.key === 'Escape') setEditingId(null);
-                            }}
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={!doc.is_processed}
+                            onChange={() => doc.is_processed && toggleDocSelection(doc.id)}
                             style={{
-                              background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                              borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)',
-                              fontSize: '14px', outline: 'none', width: '240px',
+                              marginTop: '10px', accentColor: 'var(--accent)',
+                              width: '16px', height: '16px', flexShrink: 0,
+                              cursor: doc.is_processed ? 'pointer' : 'not-allowed',
                             }}
                           />
-                        ) : (
-                          <div
-                            style={{
-                              fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)',
-                              cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}
-                            onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
-                            title="Double-click to rename"
-                          >
-                            {doc.title}
-                          </div>
                         )}
-
-                        {/* Date + status */}
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          {formatDate(doc.created_at)}
-                          {doc.is_processed && (
-                            <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>
-                          )}
+                        <div style={S.fileIcon(doc.file_type || 'txt')}>
+                          {doc.file_type || 'txt'}
                         </div>
-
-                        {/* Summary */}
-                        {doc.summary && (
-                          <div style={{
-                            fontSize: '12px', color: 'var(--text-secondary)',
-                            marginTop: '8px', lineHeight: '1.6',
-                            overflow: 'hidden', display: '-webkit-box',
-                            WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
-                          }}>
-                            {doc.summary}
-                          </div>
-                        )}
-
-                        {/* Tags */}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                          {doc.tags?.map(tag => (
-                            <span key={tag}
-                              style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                background: activeTag === tag ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                                border: `1px solid ${activeTag === tag ? 'var(--accent)' : 'var(--border)'}`,
-                                borderRadius: '20px', padding: '3px 8px',
-                                fontSize: '11px', color: activeTag === tag ? 'var(--accent-bright)' : 'var(--text-muted)',
-                                cursor: 'pointer', transition: 'all 0.2s',
-                              }}
-                              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                            >
-                              #{tag}
-                              <span
-                                onClick={e => { e.stopPropagation(); handleRemoveTag(doc.id, tag); }}
-                                style={{ fontSize: '10px', opacity: 0.6, lineHeight: 1 }}
-                              >✕</span>
-                            </span>
-                          ))}
-
-                          {/* Tag input / add button */}
-                          {editingTagsId === doc.id ? (
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          {/* Title */}
+                          {editingId === doc.id ? (
                             <input
                               autoFocus
-                              value={tagInput}
-                              onChange={e => setTagInput(e.target.value)}
+                              value={editingTitle}
+                              onChange={e => setEditingTitle(e.target.value)}
+                              onBlur={() => handleRename(doc.id)}
                               onKeyDown={e => {
-                                if (e.key === 'Enter') {
-                                  const newTags = [
-                                    ...(doc.tags || []),
-                                    ...tagInput.split(',').map(t => t.trim()).filter(Boolean),
-                                  ];
-                                  handleSaveTags(doc.id, newTags);
-                                }
-                                if (e.key === 'Escape') { setEditingTagsId(null); setTagInput(''); }
+                                if (e.key === 'Enter') handleRename(doc.id);
+                                if (e.key === 'Escape') setEditingId(null);
                               }}
-                              placeholder="tag1, tag2..."
                               style={{
                                 background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                                borderRadius: '20px', padding: '3px 10px',
-                                fontSize: '11px', color: 'var(--text-primary)',
-                                outline: 'none', width: '120px',
+                                borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)',
+                                fontSize: '14px', outline: 'none', width: '240px',
                               }}
                             />
                           ) : (
-                            <span
-                              onClick={() => setEditingTagsId(doc.id)}
+                            <div
                               style={{
-                                background: 'transparent', border: '1px dashed var(--border)',
-                                borderRadius: '20px', padding: '3px 10px',
-                                fontSize: '11px', color: 'var(--text-muted)',
-                                cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)',
+                                cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                               }}
-                              onMouseEnter={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--accent)'}
-                              onMouseLeave={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--border)'}
+                              onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
+                              title="Double-click to rename"
                             >
-                              + tag
-                            </span>
+                              {doc.title}
+                            </div>
                           )}
+
+                          {/* Date + status */}
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                            {formatDate(doc.created_at)}
+                            {doc.is_processed && (
+                              <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>
+                            )}
+                            {processing === doc.id && (
+                              <span style={{ color: '#FBBF24', marginLeft: '8px' }}>⟳ processing...</span>
+                            )}
+                          </div>
+
+                          {/* Summary */}
+                          {doc.summary && (
+                            <div style={{
+                              fontSize: '12px', color: 'var(--text-secondary)',
+                              marginTop: '8px', lineHeight: '1.6',
+                              overflow: 'hidden', display: '-webkit-box',
+                              WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
+                            }}>
+                              {doc.summary}
+                            </div>
+                          )}
+
+                          {/* Tags */}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                            {doc.tags?.map(tag => (
+                              <span key={tag}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                  background: activeTag === tag ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                                  border: `1px solid ${activeTag === tag ? 'var(--accent)' : 'var(--border)'}`,
+                                  borderRadius: '20px', padding: '3px 8px',
+                                  fontSize: '11px', color: activeTag === tag ? 'var(--accent-bright)' : 'var(--text-muted)',
+                                  cursor: 'pointer', transition: 'all 0.2s',
+                                }}
+                                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                              >
+                                #{tag}
+                                <span
+                                  onClick={e => { e.stopPropagation(); handleRemoveTag(doc.id, tag); }}
+                                  style={{ fontSize: '10px', opacity: 0.6, lineHeight: 1 }}
+                                >✕</span>
+                              </span>
+                            ))}
+
+                            {/* Tag input / add button */}
+                            {editingTagsId === doc.id ? (
+                              <input
+                                autoFocus
+                                value={tagInput}
+                                onChange={e => setTagInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') {
+                                    const newTags = [
+                                      ...(doc.tags || []),
+                                      ...tagInput.split(',').map(t => t.trim()).filter(Boolean),
+                                    ];
+                                    handleSaveTags(doc.id, newTags);
+                                  }
+                                  if (e.key === 'Escape') { setEditingTagsId(null); setTagInput(''); }
+                                }}
+                                placeholder="tag1, tag2..."
+                                style={{
+                                  background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
+                                  borderRadius: '20px', padding: '3px 10px',
+                                  fontSize: '11px', color: 'var(--text-primary)',
+                                  outline: 'none', width: '120px',
+                                }}
+                              />
+                            ) : (
+                              <span
+                                onClick={() => setEditingTagsId(doc.id)}
+                                style={{
+                                  background: 'transparent', border: '1px dashed var(--border)',
+                                  borderRadius: '20px', padding: '3px 10px',
+                                  fontSize: '11px', color: 'var(--text-muted)',
+                                  cursor: 'pointer', transition: 'all 0.2s',
+                                }}
+                                onMouseEnter={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--accent)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--border)'}
+                              >
+                                + tag
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
+
+                      {/* Right: action buttons */}
+                      {!multiChatMode && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
+                          {!doc.is_processed && (
+                            <button onClick={() => handleProcess(doc.id)} disabled={processing === doc.id} style={S.btnProcess}>
+                              {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
+                            </button>
+                          )}
+                          <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>
+                            Chat →
+                          </button>
+                          {/* Upload new version */}
+                          <button
+                            onClick={() => { setVersioningDocId(doc.id); versionInputRef.current?.click(); }}
+                            title="Upload new version"
+                            style={S.btnIcon()}
+                          >
+                            ↑v
+                          </button>
+                          {/* Version history */}
+                          <button
+                            onClick={() => showingVersions ? setShowVersionsId(null) : fetchVersions(doc.id)}
+                            title="Version history"
+                            style={S.btnIcon(showingVersions)}
+                          >
+                            🕐
+                          </button>
+                          <button
+                            onClick={() => handleDelete(doc.id)}
+                            style={S.btnDelete}
+                            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
+                            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
+                            title="Delete document"
+                          >×</button>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Right: action buttons */}
-                    {!multiChatMode && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
-                        {!doc.is_processed && (
-                          <button onClick={() => handleProcess(doc.id)} disabled={processing === doc.id} style={S.btnProcess}>
-                            {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
-                          </button>
-                        )}
-                        <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>
-                          Chat →
+                    {/* Version history panel */}
+                    {showingVersions && (
+                      <div style={{
+                        marginTop: '14px', background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border)', borderRadius: '8px', padding: '12px 14px',
+                      }}>
+                        <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '10px' }}>
+                          VERSION HISTORY
+                        </div>
+                        {!docVersions ? (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Loading...</span>
+                        ) : docVersions.length === 0 ? (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                            No previous versions. Upload a new version to start tracking.
+                          </span>
+                        ) : docVersions.map(v => (
+                          <div key={v.version_number} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+                            <div>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>v{v.version_number}</span>
+                              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '10px' }}>
+                                {v.file_type?.toUpperCase()} · {formatDate(v.created_at)}
+                              </span>
+                              {v.summary && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                                  {v.summary.slice(0, 80)}{v.summary.length > 80 ? '...' : ''}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleRestoreVersion(doc.id, v.version_number)}
+                              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0, marginLeft: '12px' }}
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))}
+                        <button onClick={() => setShowVersionsId(null)} style={{ marginTop: '10px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '11px', cursor: 'pointer' }}>
+                          Close
                         </button>
-                        <button
-                          onClick={() => handleDelete(doc.id)}
-                          style={S.btnDelete}
-                          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
-                          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
-                          title="Delete document"
-                        >×</button>
                       </div>
                     )}
                   </div>
@@ -650,35 +859,37 @@ export default function Dashboard() {
                       (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        width: '40px', height: '40px', borderRadius: '8px', flexShrink: 0,
-                        background: isMulti ? '#34D39915' : 'var(--accent-dim)',
-                        border: `1px solid ${isMulti ? '#34D39930' : 'var(--accent-glow)'}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
-                      }}>
-                        {isMulti ? '🗂️' : '💬'}
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {getConvTitle(conv)}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          width: '40px', height: '40px', borderRadius: '8px', flexShrink: 0,
+                          background: isMulti ? '#34D39915' : 'var(--accent-dim)',
+                          border: `1px solid ${isMulti ? '#34D39930' : 'var(--accent-glow)'}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
+                        }}>
+                          {isMulti ? '🗂️' : '💬'}
                         </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                          {isMulti && <span style={{ color: 'var(--success)', marginRight: '8px' }}>● {conv.document_ids.length} docs</span>}
-                          Last active {formatDate(conv.updated_at)}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {getConvTitle(conv)}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                            {isMulti && <span style={{ color: 'var(--success)', marginRight: '8px' }}>● {conv.document_ids.length} docs</span>}
+                            Last active {formatDate(conv.updated_at)}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px' }}>
-                      <button onClick={() => router.push(`/chat/${conv.id}`)} style={S.btnChat(true)}>
-                        Open →
-                      </button>
-                      <button
-                        onClick={() => handleDeleteConversation(conv.id)}
-                        style={S.btnDelete}
-                        onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
-                      >×</button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px' }}>
+                        <button onClick={() => router.push(`/chat/${conv.id}`)} style={S.btnChat(true)}>
+                          Open →
+                        </button>
+                        <button
+                          onClick={() => handleDeleteConversation(conv.id)}
+                          style={S.btnDelete}
+                          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
+                          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
+                        >×</button>
+                      </div>
                     </div>
                   </div>
                 );
