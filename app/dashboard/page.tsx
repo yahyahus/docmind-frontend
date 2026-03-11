@@ -310,8 +310,8 @@ export default function Dashboard() {
         .join(' · ');
       return titles || conv.title;
     }
-    const doc = documents.find(d => d.id === (conv.document_ids?.[0] || conv.document_id));
-    return doc?.title || conv.title;
+    // const doc = documents.find(d => d.id === (conv.document_ids?.[0] || conv.document_id));
+    return conv.title;
   }
 
   const S = {
