@@ -27,10 +27,11 @@ interface Doc {
 
 // ─── PDF Viewer ───────────────────────────────────────────────────────────────
 function PdfViewer({ docId }: { docId: string }) {
-  const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [scale, setScale] = useState(1.8);
+  const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const pdfRef = useRef<any>(null);
@@ -66,11 +67,8 @@ function PdfViewer({ docId }: { docId: string }) {
         pdfRef.current = pdf;
         setNumPages(pdf.numPages);
         setLoading(false);
-      } catch (e) {
-        if (!cancelled) {
-          setError('Failed to load PDF.');
-          setLoading(false);
-        }
+      } catch {
+        if (!cancelled) { setError('Failed to load PDF.'); setLoading(false); }
       }
     }
 
@@ -79,33 +77,38 @@ function PdfViewer({ docId }: { docId: string }) {
   }, [docId]);
 
   useEffect(() => {
-    if (!pdfRef.current || loading || !currentPage) return;
+    if (!pdfRef.current || loading) return;
 
     async function renderPage() {
       try {
         if (renderTaskRef.current) {
-          renderTaskRef.current.cancel();
+          try { renderTaskRef.current.cancel(); } catch {}
         }
 
         const page = await pdfRef.current.getPage(currentPage);
-        const canvas = canvasRefs.current[0];
-        if (!canvas) return;
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        if (!canvas || !container) return;
 
-        const container = canvas.parentElement;
-        const containerWidth = container ? container.clientWidth - 32 : 800;
+        // Fit to container width, then apply zoom on top
+        const containerWidth = container.clientWidth - 32;
         const baseViewport = page.getViewport({ scale: 1 });
-        const autoScale = containerWidth / baseViewport.width;
-        const viewport = page.getViewport({ scale: autoScale * scale });
-        canvas.height = viewport.height;
+        const fitScale = containerWidth / baseViewport.width;
+        const viewport = page.getViewport({ scale: fitScale * scale });
+
+        // Set canvas dimensions to match viewport exactly
         canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = viewport.width + 'px';
+        canvas.style.height = viewport.height + 'px';
 
         const ctx = canvas.getContext('2d')!;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         renderTaskRef.current = page.render({ canvasContext: ctx, viewport });
         await renderTaskRef.current.promise;
       } catch (e: any) {
-        if (e?.name !== 'RenderingCancelledException') {
-          console.error('Render error', e);
-        }
+        if (e?.name !== 'RenderingCancelledException') console.error('Render error', e);
       }
     }
 
@@ -125,43 +128,36 @@ function PdfViewer({ docId }: { docId: string }) {
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* PDF toolbar */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Toolbar */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '8px 14px', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-elevated)', flexShrink: 0, gap: '8px',
+        background: 'var(--bg-elevated)', flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage <= 1}
-            style={pdfBtnStyle(currentPage > 1)}
-          >←</button>
+          <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1} style={pdfBtnStyle(currentPage > 1)}>←</button>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>
             {currentPage} / {numPages}
           </span>
-          <button
-            onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-            disabled={currentPage >= numPages}
-            style={pdfBtnStyle(currentPage < numPages)}
-          >→</button>
+          <button onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages} style={pdfBtnStyle(currentPage < numPages)}>→</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} style={pdfBtnStyle(true)}>−</button>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', minWidth: '36px', textAlign: 'center' }}>
+          <button onClick={() => setScale(s => Math.max(0.5, parseFloat((s - 0.25).toFixed(2))))} style={pdfBtnStyle(true)}>−</button>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', minWidth: '40px', textAlign: 'center' }}>
             {Math.round(scale * 100)}%
           </span>
-          <button onClick={() => setScale(s => Math.min(3, s + 0.2))} style={pdfBtnStyle(true)}>+</button>
+          <button onClick={() => setScale(s => Math.min(3, parseFloat((s + 0.25).toFixed(2))))} style={pdfBtnStyle(true)}>+</button>
+          <button onClick={() => setScale(1.0)} style={pdfBtnStyle(true)}>↺</button>
         </div>
       </div>
 
-      {/* Canvas */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', display: 'flex', justifyContent: 'center', background: '#1a1a2e' }}>
-        <canvas
-          ref={el => { canvasRefs.current[0] = el; }}
-          style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', width: '100%', height: 'auto' }}
-        />
+      {/* Canvas container */}
+      <div
+        ref={containerRef}
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}
+      >
+        <canvas ref={canvasRef} style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', display: 'block' }} />
       </div>
     </div>
   );
