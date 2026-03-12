@@ -30,7 +30,7 @@ function PdfViewer({ docId }: { docId: string }) {
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [scale, setScale] = useState(1.2);
+  const [scale, setScale] = useState(1.8);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const pdfRef = useRef<any>(null);
@@ -79,7 +79,7 @@ function PdfViewer({ docId }: { docId: string }) {
   }, [docId]);
 
   useEffect(() => {
-    if (!pdfRef.current || loading) return;
+    if (!pdfRef.current || loading || !currentPage) return;
 
     async function renderPage() {
       try {
@@ -91,7 +91,11 @@ function PdfViewer({ docId }: { docId: string }) {
         const canvas = canvasRefs.current[0];
         if (!canvas) return;
 
-        const viewport = page.getViewport({ scale });
+        const container = canvas.parentElement;
+        const containerWidth = container ? container.clientWidth - 32 : 800;
+        const baseViewport = page.getViewport({ scale: 1 });
+        const autoScale = containerWidth / baseViewport.width;
+        const viewport = page.getViewport({ scale: autoScale * scale });
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
@@ -156,7 +160,7 @@ function PdfViewer({ docId }: { docId: string }) {
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', display: 'flex', justifyContent: 'center', background: '#1a1a2e' }}>
         <canvas
           ref={el => { canvasRefs.current[0] = el; }}
-          style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', maxWidth: '100%' }}
+          style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', width: '100%', height: 'auto' }}
         />
       </div>
     </div>
