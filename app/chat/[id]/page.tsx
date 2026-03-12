@@ -82,7 +82,7 @@ function PdfViewer({ docId }: { docId: string }) {
     async function renderPage() {
       try {
         if (renderTaskRef.current) {
-          try { renderTaskRef.current.cancel(); } catch {}
+          try { renderTaskRef.current.cancel(); } catch { }
         }
 
         const page = await pdfRef.current.getPage(currentPage);
@@ -155,9 +155,11 @@ function PdfViewer({ docId }: { docId: string }) {
       {/* Canvas container */}
       <div
         ref={containerRef}
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', minWidth: 0 }}
       >
-        <canvas ref={canvasRef} style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', display: 'block' }} />
+        <div style={{ margin: '0 auto', flexShrink: 0 }}>
+          <canvas ref={canvasRef} style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', display: 'block' }} />
+        </div>
       </div>
     </div>
   );
@@ -342,8 +344,8 @@ export default function Chat() {
     const assistantId = 'stream-' + Date.now();
 
     setMessages(prev => [...prev,
-      { id: tempId, role: 'user', content: question, created_at: new Date().toISOString() },
-      { id: assistantId, role: 'assistant', content: '', created_at: new Date().toISOString() },
+    { id: tempId, role: 'user', content: question, created_at: new Date().toISOString() },
+    { id: assistantId, role: 'assistant', content: '', created_at: new Date().toISOString() },
     ]);
 
     try {
