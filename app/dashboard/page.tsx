@@ -42,6 +42,8 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [convSearch, setConvSearch] = useState('');
+  const [convSearchResults, setConvSearchResults] = useState<Conversation[] | null>(null);
+  const [convSearching, setConvSearching] = useState(false);
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('keyword');
   const [semanticResults, setSemanticResults] = useState<Document[] | null>(null);
   const [semanticSearching, setSemanticSearching] = useState(false);
@@ -62,6 +64,7 @@ export default function Dashboard() {
     fetchAll();
   }, []);
 
+  // Debounced semantic search for documents
   useEffect(() => {
     if (searchMode !== 'semantic' || !search.trim()) {
       setSemanticResults(null);
@@ -70,6 +73,26 @@ export default function Dashboard() {
     const timer = setTimeout(() => runSemanticSearch(search), 500);
     return () => clearTimeout(timer);
   }, [search, searchMode]);
+
+  // Debounced conversation search (title + message content)
+  useEffect(() => {
+    if (!convSearch.trim()) {
+      setConvSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setConvSearching(true);
+      try {
+        const res = await api.get('/conversations/search', { params: { q: convSearch } });
+        setConvSearchResults(res.data);
+      } catch {
+        setConvSearchResults([]);
+      } finally {
+        setConvSearching(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [convSearch]);
 
   async function fetchAll() {
     try {
@@ -110,9 +133,11 @@ export default function Dashboard() {
     });
   })();
 
-  const filteredConvs = conversations.filter(c =>
-    c.title.toLowerCase().includes(convSearch.toLowerCase())
-  );
+  const filteredConvs = convSearch.trim() && convSearchResults !== null
+    ? convSearchResults
+    : conversations.filter(c =>
+        c.title.toLowerCase().includes(convSearch.toLowerCase())
+      );
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -706,15 +731,22 @@ export default function Dashboard() {
         {activeTab === 'conversations' && (
           <>
             {/* Conversation search */}
-            <input
-              type="text"
-              value={convSearch}
-              onChange={e => setConvSearch(e.target.value)}
-              placeholder="Search conversations..."
-              style={{ ...S.searchInput, marginBottom: '16px' }}
-              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-              onBlur={e => e.target.style.borderColor = 'var(--border)'}
-            />
+            <div style={{ position: 'relative', marginBottom: '16px' }}>
+              <input
+                type="text"
+                value={convSearch}
+                onChange={e => setConvSearch(e.target.value)}
+                placeholder="Search conversations and messages..."
+                style={S.searchInput}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
+              />
+              {convSearching && (
+                <span style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  searching…
+                </span>
+              )}
+            </div>
 
             {loading ? (
               <div style={S.emptyState}>
