@@ -41,6 +41,7 @@ export default function Dashboard() {
   const [processing, setProcessing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [convSearch, setConvSearch] = useState('');
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('keyword');
   const [semanticResults, setSemanticResults] = useState<Document[] | null>(null);
   const [semanticSearching, setSemanticSearching] = useState(false);
@@ -61,7 +62,6 @@ export default function Dashboard() {
     fetchAll();
   }, []);
 
-  // Debounced semantic search
   useEffect(() => {
     if (searchMode !== 'semantic' || !search.trim()) {
       setSemanticResults(null);
@@ -110,11 +110,9 @@ export default function Dashboard() {
     });
   })();
 
-  const filteredConvs = conversations.filter(c => {
-    const doc = documents.find(d => d.id === c.document_id);
-    return doc?.title.toLowerCase().includes(search.toLowerCase()) ||
-      c.title.toLowerCase().includes(search.toLowerCase());
-  });
+  const filteredConvs = conversations.filter(c =>
+    c.title.toLowerCase().includes(convSearch.toLowerCase())
+  );
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -150,7 +148,6 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setDocuments(prev => prev.map(d => d.id === docId ? res.data : d));
-      // Auto-process the new version
       setProcessing(docId);
       await api.post(`/documents/${docId}/process`);
       const docsRes = await api.get('/documents');
@@ -310,7 +307,6 @@ export default function Dashboard() {
         .join(' · ');
       return titles || conv.title;
     }
-    // const doc = documents.find(d => d.id === (conv.document_ids?.[0] || conv.document_id));
     return conv.title;
   }
 
@@ -337,7 +333,7 @@ export default function Dashboard() {
       cursor: 'pointer', transition: 'opacity 0.2s',
     },
     tabs: {
-      display: 'flex', gap: '4px', marginBottom: '24px',
+      display: 'flex', gap: '4px', marginBottom: '16px',
       background: 'var(--bg-surface)', borderRadius: '10px',
       padding: '4px', width: 'fit-content',
     },
@@ -394,11 +390,18 @@ export default function Dashboard() {
       textAlign: 'center' as const, padding: '80px 20px',
       color: 'var(--text-muted)',
     },
+    searchInput: {
+      width: '100%', background: 'var(--bg-surface)',
+      border: '1px solid var(--border)', borderRadius: '10px',
+      padding: '12px 16px', color: 'var(--text-primary)',
+      fontSize: '14px', outline: 'none', boxSizing: 'border-box' as const,
+      transition: 'border-color 0.2s',
+    },
   };
 
   return (
     <div style={S.page}>
-      {/* Hidden input for version uploads — triggered programmatically */}
+      {/* Hidden input for version uploads */}
       <input
         ref={versionInputRef}
         type="file"
@@ -461,57 +464,8 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Search bar + keyword/semantic toggle */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={searchMode === 'semantic' ? 'Search by meaning...' : 'Search documents...'}
-              style={{
-                width: '100%', background: 'var(--bg-surface)',
-                border: '1px solid var(--border)', borderRadius: '10px',
-                padding: '12px 16px', color: 'var(--text-primary)',
-                fontSize: '14px', outline: 'none', boxSizing: 'border-box',
-                transition: 'border-color 0.2s',
-              }}
-              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-              onBlur={e => e.target.style.borderColor = 'var(--border)'}
-            />
-            {semanticSearching && (
-              <span style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: 'var(--text-muted)' }}>
-                searching…
-              </span>
-            )}
-          </div>
-          {/* Mode toggle */}
-          <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden', flexShrink: 0 }}>
-            {(['keyword', 'semantic'] as const).map(mode => (
-              <button key={mode}
-                onClick={() => { setSearchMode(mode); setSemanticResults(null); setSearch(''); }}
-                style={{
-                  padding: '10px 14px', border: 'none',
-                  background: searchMode === mode ? 'var(--accent-dim)' : 'transparent',
-                  color: searchMode === mode ? 'var(--accent-bright)' : 'var(--text-muted)',
-                  fontSize: '12px', fontWeight: searchMode === mode ? 600 : 400,
-                  cursor: 'pointer', fontFamily: 'DM Mono, monospace',
-                  letterSpacing: '0.03em', transition: 'all 0.2s',
-                }}
-              >
-                {mode === 'keyword' ? '🔤' : '🧠'} {mode}
-              </button>
-            ))}
-          </div>
-        </div>
-        {searchMode === 'semantic' && !search && (
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-            Finds documents by meaning — try "machine learning results" or "financial performance"
-          </p>
-        )}
-
         {/* Tabs */}
-        <div style={{ ...S.tabs, marginTop: '16px' }}>
+        <div style={S.tabs}>
           <button style={S.tab(activeTab === 'documents')} onClick={() => setActiveTab('documents')}>
             Documents ({documents.length})
           </button>
@@ -520,382 +474,301 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Multi-doc toolbar */}
+        {/* ── DOCUMENTS TAB ── */}
         {activeTab === 'documents' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-            <button
-              onClick={() => { setMultiChatMode(!multiChatMode); setSelectedDocs([]); }}
-              style={{
-                background: multiChatMode ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                border: `1px solid ${multiChatMode ? 'var(--accent)' : 'var(--border)'}`,
-                borderRadius: '7px', padding: '7px 14px',
-                color: multiChatMode ? 'var(--accent-bright)' : 'var(--text-secondary)',
-                fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
-              }}
-            >
-              {multiChatMode ? '✕ Cancel' : '⊕ Multi-doc chat'}
-            </button>
-            {multiChatMode && selectedDocs.length >= 2 && (
-              <button onClick={handleMultiChat} style={{
-                background: 'linear-gradient(135deg, #6366F1, #818CF8)',
-                border: 'none', borderRadius: '7px', padding: '7px 16px',
-                color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-              }}>
-                Chat with {selectedDocs.length} docs →
-              </button>
-            )}
-            {multiChatMode && selectedDocs.length < 2 && (
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                Select 2+ processed documents
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Active tag filter indicator */}
-        {activeTag && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Filtered by:</span>
-            <span style={{
-              background: 'var(--accent-dim)', border: '1px solid var(--accent)',
-              borderRadius: '20px', padding: '3px 10px',
-              fontSize: '11px', color: 'var(--accent-bright)',
-            }}>#{activeTag}</span>
-            <button onClick={() => setActiveTag(null)} style={{
-              background: 'none', border: 'none', color: 'var(--text-muted)',
-              fontSize: '12px', cursor: 'pointer',
-            }}>✕ Clear</button>
-          </div>
-        )}
-
-        {/* Content */}
-        {loading ? (
-          <div style={S.emptyState}>
-            <div style={{ fontSize: '14px', marginBottom: '8px' }}>Loading workspace...</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>First load may take 30 seconds</div>
-          </div>
-        ) : activeTab === 'documents' ? (
-          filteredDocs.length === 0 ? (
-            <div style={S.emptyState}>
-              <div style={{ fontSize: '32px', marginBottom: '16px' }}>◈</div>
-              <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                {searchMode === 'semantic' && search ? 'No semantic matches found.' : 'No documents yet'}
+          <>
+            {/* Document search + mode toggle */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={searchMode === 'semantic' ? 'Search by meaning...' : 'Search documents...'}
+                  style={S.searchInput}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                />
+                {semanticSearching && (
+                  <span style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                    searching…
+                  </span>
+                )}
               </div>
-              <div style={{ fontSize: '13px' }}>
-                {searchMode === 'semantic' && search
-                  ? 'Try different keywords or switch to keyword search.'
-                  : 'Upload a PDF or TXT file to get started'}
-              </div>
-            </div>
-          ) : (
-            <div className="animate-fade-in">
-              {filteredDocs.map((doc) => {
-                const isSelected = selectedDocs.includes(doc.id);
-                const showingVersions = showVersionsId === doc.id;
-                const docVersions = versions[doc.id];
-
-                return (
-                  <div key={doc.id}
+              <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden', flexShrink: 0 }}>
+                {(['keyword', 'semantic'] as const).map(mode => (
+                  <button key={mode}
+                    onClick={() => { setSearchMode(mode); setSemanticResults(null); setSearch(''); }}
                     style={{
-                      ...S.card,
-                      borderColor: isSelected ? 'var(--accent)' : 'var(--border)',
-                      background: isSelected ? 'var(--accent-dim)' : 'var(--bg-surface)',
-                    }}
-                    onMouseEnter={e => {
-                      if (!isSelected) {
-                        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)';
-                        (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)';
-                      }
-                    }}
-                    onMouseLeave={e => {
-                      if (!isSelected) {
-                        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)';
-                        (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
-                      }
+                      padding: '10px 14px', border: 'none',
+                      background: searchMode === mode ? 'var(--accent-dim)' : 'transparent',
+                      color: searchMode === mode ? 'var(--accent-bright)' : 'var(--text-muted)',
+                      fontSize: '12px', fontWeight: searchMode === mode ? 600 : 400,
+                      cursor: 'pointer', fontFamily: 'DM Mono, monospace',
+                      letterSpacing: '0.03em', transition: 'all 0.2s',
                     }}
                   >
-                    {/* Main row */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                      {/* Left: checkbox (multi mode) + icon + info */}
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
-                        {multiChatMode && (
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={!doc.is_processed}
-                            onChange={() => doc.is_processed && toggleDocSelection(doc.id)}
-                            style={{
-                              marginTop: '10px', accentColor: 'var(--accent)',
-                              width: '16px', height: '16px', flexShrink: 0,
-                              cursor: doc.is_processed ? 'pointer' : 'not-allowed',
-                            }}
-                          />
-                        )}
-                        <div style={S.fileIcon(doc.file_type || 'txt')}>
-                          {doc.file_type || 'txt'}
-                        </div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          {/* Title */}
-                          {editingId === doc.id ? (
-                            <input
-                              autoFocus
-                              value={editingTitle}
-                              onChange={e => setEditingTitle(e.target.value)}
-                              onBlur={() => handleRename(doc.id)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') handleRename(doc.id);
-                                if (e.key === 'Escape') setEditingId(null);
-                              }}
-                              style={{
-                                background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                                borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)',
-                                fontSize: '14px', outline: 'none', width: '240px',
-                              }}
+                    {mode === 'keyword' ? '🔤' : '🧠'} {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {searchMode === 'semantic' && !search && (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                Finds documents by meaning — try "machine learning results" or "financial performance"
+              </p>
+            )}
+
+            {/* Multi-doc toolbar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', marginTop: '8px' }}>
+              <button
+                onClick={() => { setMultiChatMode(!multiChatMode); setSelectedDocs([]); }}
+                style={{
+                  background: multiChatMode ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  border: `1px solid ${multiChatMode ? 'var(--accent)' : 'var(--border)'}`,
+                  borderRadius: '7px', padding: '7px 14px',
+                  color: multiChatMode ? 'var(--accent-bright)' : 'var(--text-secondary)',
+                  fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
+                }}
+              >
+                {multiChatMode ? '✕ Cancel' : '⊕ Multi-doc chat'}
+              </button>
+              {multiChatMode && selectedDocs.length >= 2 && (
+                <button onClick={handleMultiChat} style={{
+                  background: 'linear-gradient(135deg, #6366F1, #818CF8)',
+                  border: 'none', borderRadius: '7px', padding: '7px 16px',
+                  color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                }}>
+                  Chat with {selectedDocs.length} docs →
+                </button>
+              )}
+              {multiChatMode && selectedDocs.length < 2 && (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Select 2+ processed documents</span>
+              )}
+            </div>
+
+            {/* Active tag filter */}
+            {activeTag && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Filtered by:</span>
+                <span style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', color: 'var(--accent-bright)' }}>
+                  #{activeTag}
+                </span>
+                <button onClick={() => setActiveTag(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}>
+                  ✕ Clear
+                </button>
+              </div>
+            )}
+
+            {/* Documents list */}
+            {loading ? (
+              <div style={S.emptyState}>
+                <div style={{ fontSize: '14px', marginBottom: '8px' }}>Loading workspace...</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>First load may take 30 seconds</div>
+              </div>
+            ) : filteredDocs.length === 0 ? (
+              <div style={S.emptyState}>
+                <div style={{ fontSize: '32px', marginBottom: '16px' }}>◈</div>
+                <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  {searchMode === 'semantic' && search ? 'No semantic matches found.' : 'No documents yet'}
+                </div>
+                <div style={{ fontSize: '13px' }}>
+                  {searchMode === 'semantic' && search ? 'Try different keywords or switch to keyword search.' : 'Upload a PDF or TXT file to get started'}
+                </div>
+              </div>
+            ) : (
+              <div className="animate-fade-in">
+                {filteredDocs.map((doc) => {
+                  const isSelected = selectedDocs.includes(doc.id);
+                  const showingVersions = showVersionsId === doc.id;
+                  const docVersions = versions[doc.id];
+                  return (
+                    <div key={doc.id}
+                      style={{ ...S.card, borderColor: isSelected ? 'var(--accent)' : 'var(--border)', background: isSelected ? 'var(--accent-dim)' : 'var(--bg-surface)' }}
+                      onMouseEnter={e => { if (!isSelected) { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)'; (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)'; } }}
+                      onMouseLeave={e => { if (!isSelected) { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)'; } }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
+                          {multiChatMode && (
+                            <input type="checkbox" checked={isSelected} disabled={!doc.is_processed}
+                              onChange={() => doc.is_processed && toggleDocSelection(doc.id)}
+                              style={{ marginTop: '10px', accentColor: 'var(--accent)', width: '16px', height: '16px', flexShrink: 0, cursor: doc.is_processed ? 'pointer' : 'not-allowed' }}
                             />
-                          ) : (
-                            <div
-                              style={{
-                                fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)',
-                                cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              }}
-                              onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
-                              title="Double-click to rename"
-                            >
-                              {doc.title}
-                            </div>
                           )}
-
-                          {/* Date + status */}
-                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                            {formatDate(doc.created_at)}
-                            {doc.is_processed && (
-                              <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>
-                            )}
-                            {processing === doc.id && (
-                              <span style={{ color: '#FBBF24', marginLeft: '8px' }}>⟳ processing...</span>
-                            )}
-                          </div>
-
-                          {/* Summary */}
-                          {doc.summary && (
-                            <div style={{
-                              fontSize: '12px', color: 'var(--text-secondary)',
-                              marginTop: '8px', lineHeight: '1.6',
-                              overflow: 'hidden', display: '-webkit-box',
-                              WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any,
-                            }}>
-                              {doc.summary}
-                            </div>
-                          )}
-
-                          {/* Tags */}
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                            {doc.tags?.map(tag => (
-                              <span key={tag}
-                                style={{
-                                  display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                  background: activeTag === tag ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                                  border: `1px solid ${activeTag === tag ? 'var(--accent)' : 'var(--border)'}`,
-                                  borderRadius: '20px', padding: '3px 8px',
-                                  fontSize: '11px', color: activeTag === tag ? 'var(--accent-bright)' : 'var(--text-muted)',
-                                  cursor: 'pointer', transition: 'all 0.2s',
-                                }}
-                                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                              >
-                                #{tag}
-                                <span
-                                  onClick={e => { e.stopPropagation(); handleRemoveTag(doc.id, tag); }}
-                                  style={{ fontSize: '10px', opacity: 0.6, lineHeight: 1 }}
-                                >✕</span>
-                              </span>
-                            ))}
-
-                            {/* Tag input / add button */}
-                            {editingTagsId === doc.id ? (
-                              <input
-                                autoFocus
-                                value={tagInput}
-                                onChange={e => setTagInput(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') {
-                                    const newTags = [
-                                      ...(doc.tags || []),
-                                      ...tagInput.split(',').map(t => t.trim()).filter(Boolean),
-                                    ];
-                                    handleSaveTags(doc.id, newTags);
-                                  }
-                                  if (e.key === 'Escape') { setEditingTagsId(null); setTagInput(''); }
-                                }}
-                                placeholder="tag1, tag2..."
-                                style={{
-                                  background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                                  borderRadius: '20px', padding: '3px 10px',
-                                  fontSize: '11px', color: 'var(--text-primary)',
-                                  outline: 'none', width: '120px',
-                                }}
+                          <div style={S.fileIcon(doc.file_type || 'txt')}>{doc.file_type || 'txt'}</div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            {editingId === doc.id ? (
+                              <input autoFocus value={editingTitle} onChange={e => setEditingTitle(e.target.value)}
+                                onBlur={() => handleRename(doc.id)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleRename(doc.id); if (e.key === 'Escape') setEditingId(null); }}
+                                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 8px', color: 'var(--text-primary)', fontSize: '14px', outline: 'none', width: '240px' }}
                               />
                             ) : (
-                              <span
-                                onClick={() => setEditingTagsId(doc.id)}
-                                style={{
-                                  background: 'transparent', border: '1px dashed var(--border)',
-                                  borderRadius: '20px', padding: '3px 10px',
-                                  fontSize: '11px', color: 'var(--text-muted)',
-                                  cursor: 'pointer', transition: 'all 0.2s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--accent)'}
-                                onMouseLeave={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--border)'}
+                              <div
+                                style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                onDoubleClick={() => { setEditingId(doc.id); setEditingTitle(doc.title); }}
+                                title="Double-click to rename"
                               >
-                                + tag
-                              </span>
+                                {doc.title}
+                              </div>
                             )}
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                              {formatDate(doc.created_at)}
+                              {doc.is_processed && <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>}
+                              {processing === doc.id && <span style={{ color: '#FBBF24', marginLeft: '8px' }}>⟳ processing...</span>}
+                            </div>
+                            {doc.summary && (
+                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', lineHeight: '1.6', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                                {doc.summary}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                              {doc.tags?.map(tag => (
+                                <span key={tag}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: activeTag === tag ? 'var(--accent-dim)' : 'var(--bg-elevated)', border: `1px solid ${activeTag === tag ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '20px', padding: '3px 8px', fontSize: '11px', color: activeTag === tag ? 'var(--accent-bright)' : 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.2s' }}
+                                  onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                                >
+                                  #{tag}
+                                  <span onClick={e => { e.stopPropagation(); handleRemoveTag(doc.id, tag); }} style={{ fontSize: '10px', opacity: 0.6, lineHeight: 1 }}>✕</span>
+                                </span>
+                              ))}
+                              {editingTagsId === doc.id ? (
+                                <input autoFocus value={tagInput} onChange={e => setTagInput(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') { const newTags = [...(doc.tags || []), ...tagInput.split(',').map(t => t.trim()).filter(Boolean)]; handleSaveTags(doc.id, newTags); }
+                                    if (e.key === 'Escape') { setEditingTagsId(null); setTagInput(''); }
+                                  }}
+                                  placeholder="tag1, tag2..."
+                                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', color: 'var(--text-primary)', outline: 'none', width: '120px' }}
+                                />
+                              ) : (
+                                <span onClick={() => setEditingTagsId(doc.id)}
+                                  style={{ background: 'transparent', border: '1px dashed var(--border)', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.2s' }}
+                                  onMouseEnter={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--accent)'}
+                                  onMouseLeave={e => (e.currentTarget as HTMLSpanElement).style.borderColor = 'var(--border)'}
+                                >+ tag</span>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        {!multiChatMode && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
+                            {!doc.is_processed && (
+                              <button onClick={() => handleProcess(doc.id)} disabled={processing === doc.id} style={S.btnProcess}>
+                                {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
+                              </button>
+                            )}
+                            <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>Chat →</button>
+                            <button onClick={() => { setVersioningDocId(doc.id); versionInputRef.current?.click(); }} title="Upload new version" style={S.btnIcon()}>↑v</button>
+                            <button onClick={() => showingVersions ? setShowVersionsId(null) : fetchVersions(doc.id)} title="Version history" style={S.btnIcon(showingVersions)}>🕐</button>
+                            <button onClick={() => handleDelete(doc.id)} style={S.btnDelete}
+                              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
+                              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
+                              title="Delete document"
+                            >×</button>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Right: action buttons */}
-                      {!multiChatMode && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px', marginTop: '2px' }}>
-                          {!doc.is_processed && (
-                            <button onClick={() => handleProcess(doc.id)} disabled={processing === doc.id} style={S.btnProcess}>
-                              {processing === doc.id ? '⟳ Processing...' : '⚡ Process'}
-                            </button>
-                          )}
-                          <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>
-                            Chat →
-                          </button>
-                          {/* Upload new version */}
-                          <button
-                            onClick={() => { setVersioningDocId(doc.id); versionInputRef.current?.click(); }}
-                            title="Upload new version"
-                            style={S.btnIcon()}
-                          >
-                            ↑v
-                          </button>
-                          {/* Version history */}
-                          <button
-                            onClick={() => showingVersions ? setShowVersionsId(null) : fetchVersions(doc.id)}
-                            title="Version history"
-                            style={S.btnIcon(showingVersions)}
-                          >
-                            🕐
-                          </button>
-                          <button
-                            onClick={() => handleDelete(doc.id)}
-                            style={S.btnDelete}
-                            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
-                            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
-                            title="Delete document"
-                          >×</button>
+                      {/* Version history panel */}
+                      {showingVersions && (
+                        <div style={{ marginTop: '14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px 14px' }}>
+                          <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '10px' }}>VERSION HISTORY</div>
+                          {!docVersions ? (
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Loading...</span>
+                          ) : docVersions.length === 0 ? (
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No previous versions. Upload a new version to start tracking.</span>
+                          ) : docVersions.map(v => (
+                            <div key={v.version_number} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+                              <div>
+                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>v{v.version_number}</span>
+                                <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '10px' }}>{v.file_type?.toUpperCase()} · {formatDate(v.created_at)}</span>
+                                {v.summary && <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>{v.summary.slice(0, 80)}{v.summary.length > 80 ? '...' : ''}</div>}
+                              </div>
+                              <button onClick={() => handleRestoreVersion(doc.id, v.version_number)}
+                                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0, marginLeft: '12px' }}
+                              >Restore</button>
+                            </div>
+                          ))}
+                          <button onClick={() => setShowVersionsId(null)} style={{ marginTop: '10px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '11px', cursor: 'pointer' }}>Close</button>
                         </div>
                       )}
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
 
-                    {/* Version history panel */}
-                    {showingVersions && (
-                      <div style={{
-                        marginTop: '14px', background: 'var(--bg-elevated)',
-                        border: '1px solid var(--border)', borderRadius: '8px', padding: '12px 14px',
-                      }}>
-                        <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '10px' }}>
-                          VERSION HISTORY
-                        </div>
-                        {!docVersions ? (
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Loading...</span>
-                        ) : docVersions.length === 0 ? (
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                            No previous versions. Upload a new version to start tracking.
-                          </span>
-                        ) : docVersions.map(v => (
-                          <div key={v.version_number} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-                            <div>
-                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>v{v.version_number}</span>
-                              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '10px' }}>
-                                {v.file_type?.toUpperCase()} · {formatDate(v.created_at)}
-                              </span>
-                              {v.summary && (
-                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                                  {v.summary.slice(0, 80)}{v.summary.length > 80 ? '...' : ''}
-                                </div>
-                              )}
+        {/* ── CONVERSATIONS TAB ── */}
+        {activeTab === 'conversations' && (
+          <>
+            {/* Conversation search */}
+            <input
+              type="text"
+              value={convSearch}
+              onChange={e => setConvSearch(e.target.value)}
+              placeholder="Search conversations..."
+              style={{ ...S.searchInput, marginBottom: '16px' }}
+              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
+            />
+
+            {loading ? (
+              <div style={S.emptyState}>
+                <div style={{ fontSize: '14px', marginBottom: '8px' }}>Loading workspace...</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>First load may take 30 seconds</div>
+              </div>
+            ) : filteredConvs.length === 0 ? (
+              <div style={S.emptyState}>
+                <div style={{ fontSize: '32px', marginBottom: '16px' }}>💬</div>
+                <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  {convSearch ? 'No conversations match your search.' : 'No conversations yet'}
+                </div>
+                <div style={{ fontSize: '13px' }}>
+                  {convSearch ? 'Try different keywords.' : 'Process a document and click Chat to start'}
+                </div>
+              </div>
+            ) : (
+              <div className="animate-fade-in">
+                {filteredConvs.map((conv) => {
+                  const isMulti = conv.document_ids?.length > 1;
+                  return (
+                    <div key={conv.id} style={S.card}
+                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)'; (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)'; }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '8px', flexShrink: 0, background: isMulti ? '#34D39915' : 'var(--accent-dim)', border: `1px solid ${isMulti ? '#34D39930' : 'var(--accent-glow)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                            {isMulti ? '🗂️' : '💬'}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {getConvTitle(conv)}
                             </div>
-                            <button
-                              onClick={() => handleRestoreVersion(doc.id, v.version_number)}
-                              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0, marginLeft: '12px' }}
-                            >
-                              Restore
-                            </button>
-                          </div>
-                        ))}
-                        <button onClick={() => setShowVersionsId(null)} style={{ marginTop: '10px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '11px', cursor: 'pointer' }}>
-                          Close
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : (
-          filteredConvs.length === 0 ? (
-            <div style={S.emptyState}>
-              <div style={{ fontSize: '32px', marginBottom: '16px' }}>💬</div>
-              <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '8px' }}>No conversations yet</div>
-              <div style={{ fontSize: '13px' }}>Process a document and click Chat to start</div>
-            </div>
-          ) : (
-            <div className="animate-fade-in">
-              {filteredConvs.map((conv) => {
-                const isMulti = conv.document_ids?.length > 1;
-                return (
-                  <div key={conv.id} style={S.card}
-                    onMouseEnter={e => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)';
-                      (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-elevated)';
-                    }}
-                    onMouseLeave={e => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)';
-                      (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          width: '40px', height: '40px', borderRadius: '8px', flexShrink: 0,
-                          background: isMulti ? '#34D39915' : 'var(--accent-dim)',
-                          border: `1px solid ${isMulti ? '#34D39930' : 'var(--accent-glow)'}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
-                        }}>
-                          {isMulti ? '🗂️' : '💬'}
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {getConvTitle(conv)}
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                            {isMulti && <span style={{ color: 'var(--success)', marginRight: '8px' }}>● {conv.document_ids.length} docs</span>}
-                            Last active {formatDate(conv.updated_at)}
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                              {isMulti && <span style={{ color: 'var(--success)', marginRight: '8px' }}>● {conv.document_ids.length} docs</span>}
+                              Last active {formatDate(conv.updated_at)}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px' }}>
-                        <button onClick={() => router.push(`/chat/${conv.id}`)} style={S.btnChat(true)}>
-                          Open →
-                        </button>
-                        <button
-                          onClick={() => handleDeleteConversation(conv.id)}
-                          style={S.btnDelete}
-                          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
-                          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
-                        >×</button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '16px' }}>
+                          <button onClick={() => router.push(`/chat/${conv.id}`)} style={S.btnChat(true)}>Open →</button>
+                          <button onClick={() => handleDeleteConversation(conv.id)} style={S.btnDelete}
+                            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)'}
+                            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'}
+                          >×</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
