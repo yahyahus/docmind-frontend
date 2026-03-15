@@ -58,6 +58,8 @@ export default function Dashboard() {
   const [versioningDocId, setVersioningDocId] = useState<string | null>(null);
   const [versions, setVersions] = useState<Record<string, DocVersion[]>>({});
   const [showVersionsId, setShowVersionsId] = useState<string | null>(null);
+  const [summarizingId, setSummarizingId] = useState<string | null>(null);
+  const [expandedSummaryId, setExpandedSummaryId] = useState<string | null>(null);
 
   useEffect(() => {
     wakeUpBackend();
@@ -216,6 +218,20 @@ export default function Dashboard() {
       setError('Processing failed.');
     } finally {
       setProcessing(null);
+    }
+  }
+
+  async function handleSummarize(docId: string) {
+    setSummarizingId(docId);
+    setError('');
+    try {
+      const res = await api.post(`/documents/${docId}/summarize`);
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, summary: res.data.summary } : d));
+      setExpandedSummaryId(docId);
+    } catch {
+      setError('Summarization failed.');
+    } finally {
+      setSummarizingId(null);
     }
   }
 
@@ -606,6 +622,7 @@ export default function Dashboard() {
                 {filteredDocs.map((doc) => {
                   const isSelected = selectedDocs.includes(doc.id);
                   const showingVersions = showVersionsId === doc.id;
+                  const showingSummary = expandedSummaryId === doc.id;
                   const docVersions = versions[doc.id];
                   return (
                     <div key={doc.id}
@@ -642,12 +659,15 @@ export default function Dashboard() {
                               {formatDate(doc.created_at)}
                               {doc.is_processed && <span style={{ color: 'var(--success)', marginLeft: '8px' }}>● AI ready</span>}
                               {processing === doc.id && <span style={{ color: '#FBBF24', marginLeft: '8px' }}>⟳ processing...</span>}
+                              {doc.summary && !showingSummary && (
+                                <span
+                                  onClick={() => setExpandedSummaryId(doc.id)}
+                                  style={{ color: 'var(--text-muted)', marginLeft: '8px', cursor: 'pointer', fontStyle: 'italic', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                                >
+                                  summary
+                                </span>
+                              )}
                             </div>
-                            {doc.summary && (
-                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', lineHeight: '1.6', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
-                                {doc.summary}
-                              </div>
-                            )}
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
                               {doc.tags?.map(tag => (
                                 <span key={tag}
@@ -685,6 +705,17 @@ export default function Dashboard() {
                               </button>
                             )}
                             <button onClick={() => handleChat(doc.id)} disabled={!doc.is_processed} style={S.btnChat(doc.is_processed)}>Chat →</button>
+                            <button
+                              onClick={() => {
+                                if (showingSummary) { setExpandedSummaryId(null); return; }
+                                if (doc.summary) { setExpandedSummaryId(doc.id); } else { handleSummarize(doc.id); }
+                              }}
+                              disabled={summarizingId === doc.id || !doc.is_processed}
+                              title={doc.summary ? 'View / regenerate summary' : 'Generate summary'}
+                              style={S.btnIcon(showingSummary)}
+                            >
+                              {summarizingId === doc.id ? '⟳' : '∑'}
+                            </button>
                             <button onClick={() => { setVersioningDocId(doc.id); versionInputRef.current?.click(); }} title="Upload new version" style={S.btnIcon()}>↑v</button>
                             <button onClick={() => showingVersions ? setShowVersionsId(null) : fetchVersions(doc.id)} title="Version history" style={S.btnIcon(showingVersions)}>🕐</button>
                             <button onClick={() => handleDelete(doc.id)} style={S.btnDelete}
@@ -695,6 +726,28 @@ export default function Dashboard() {
                           </div>
                         )}
                       </div>
+
+                      {/* Summary panel */}
+                      {showingSummary && (
+                        <div style={{ marginTop: '14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px', padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                            <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>SUMMARY</span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                onClick={() => handleSummarize(doc.id)}
+                                disabled={summarizingId === doc.id}
+                                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '6px', padding: '3px 10px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                              >
+                                {summarizingId === doc.id ? '⟳ Regenerating...' : '↺ Regenerate'}
+                              </button>
+                              <button onClick={() => setExpandedSummaryId(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}>✕</button>
+                            </div>
+                          </div>
+                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.7', margin: 0 }}>
+                            {doc.summary || 'No summary yet. Click Regenerate to create one.'}
+                          </p>
+                        </div>
+                      )}
 
                       {/* Version history panel */}
                       {showingVersions && (
