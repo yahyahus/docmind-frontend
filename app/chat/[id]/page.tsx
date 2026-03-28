@@ -8,6 +8,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  sources?: string[]; // doc titles that contributed to this response (multi-doc only)
 }
 
 interface Conversation {
@@ -22,6 +23,7 @@ interface Doc {
   title: string;
   file_type: string;
   content: string;
+  summary?: string;
   is_processed: boolean;
 }
 
@@ -39,64 +41,44 @@ function PdfViewer({ docId }: { docId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadPdf() {
-      setLoading(true);
-      setError('');
+      setLoading(true); setError('');
       try {
         const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
-        const token = window.document.cookie
-          .split('; ')
-          .find(r => r.startsWith('token='))
-          ?.split('=')[1] || '';
-
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/documents/${docId}/file`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-
+        const token = window.document.cookie.split('; ').find(r => r.startsWith('token='))?.split('=')[1] || '';
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/documents/${docId}/file`,
+          { headers: { Authorization: `Bearer ${token}` } });
         if (!response.ok) throw new Error('Failed to fetch PDF');
 
-        const arrayBuffer = await response.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
+        const pdf = await pdfjsLib.getDocument({ data: await response.arrayBuffer() }).promise;
         if (cancelled) return;
-
-        pdfRef.current = pdf;
-        setNumPages(pdf.numPages);
-        setLoading(false);
+        pdfRef.current = pdf; setNumPages(pdf.numPages); setLoading(false);
       } catch {
         if (!cancelled) { setError('Failed to load PDF.'); setLoading(false); }
       }
     }
-
     loadPdf();
     return () => { cancelled = true; };
   }, [docId]);
 
   useEffect(() => {
     if (!pdfRef.current || loading) return;
-
     async function renderPage() {
       try {
-        if (renderTaskRef.current) {
-          try { renderTaskRef.current.cancel(); } catch { }
-        }
-
+        if (renderTaskRef.current) { try { renderTaskRef.current.cancel(); } catch { } }
         const page = await pdfRef.current.getPage(currentPage);
         const canvas = canvasRef.current;
         const container = containerRef.current;
         if (!canvas || !container) return;
 
-        // Fit to container width, then apply zoom on top
         const containerWidth = container.clientWidth - 32;
         const baseViewport = page.getViewport({ scale: 1 });
         const fitScale = containerWidth / baseViewport.width;
         const viewport = page.getViewport({ scale: fitScale * scale });
 
-        // Set canvas dimensions to match viewport exactly
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.style.width = viewport.width + 'px';
@@ -104,59 +86,38 @@ function PdfViewer({ docId }: { docId: string }) {
 
         const ctx = canvas.getContext('2d')!;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-
         renderTaskRef.current = page.render({ canvasContext: ctx, viewport });
         await renderTaskRef.current.promise;
       } catch (e: any) {
         if (e?.name !== 'RenderingCancelledException') console.error('Render error', e);
       }
     }
-
     renderPage();
   }, [currentPage, scale, loading]);
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>
-      Loading PDF...
-    </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>Loading PDF...</div>
   );
-
   if (error) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--danger)', fontSize: '13px' }}>
-      {error}
-    </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--danger)', fontSize: '13px' }}>{error}</div>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 14px', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-elevated)', flexShrink: 0,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1} style={pdfBtnStyle(currentPage > 1)}>←</button>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>
-            {currentPage} / {numPages}
-          </span>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace' }}>{currentPage} / {numPages}</span>
           <button onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages} style={pdfBtnStyle(currentPage < numPages)}>→</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button onClick={() => setScale(s => Math.max(0.5, parseFloat((s - 0.25).toFixed(2))))} style={pdfBtnStyle(true)}>−</button>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', minWidth: '40px', textAlign: 'center' }}>
-            {Math.round(scale * 100)}%
-          </span>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'DM Mono, monospace', minWidth: '40px', textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
           <button onClick={() => setScale(s => Math.min(3, parseFloat((s + 0.25).toFixed(2))))} style={pdfBtnStyle(true)}>+</button>
           <button onClick={() => setScale(1.0)} style={pdfBtnStyle(true)}>↺</button>
         </div>
       </div>
-
-      {/* Canvas container */}
-      <div
-        ref={containerRef}
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', minWidth: 0 }}
-      >
+      <div ref={containerRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', minWidth: 0 }}>
         <div style={{ margin: '0 auto', flexShrink: 0 }}>
           <canvas ref={canvasRef} style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', display: 'block' }} />
         </div>
@@ -179,11 +140,7 @@ function pdfBtnStyle(active: boolean) {
 function TxtViewer({ content }: { content: string }) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '24px', background: 'var(--bg-base)' }}>
-      <pre style={{
-        fontFamily: 'DM Mono, monospace', fontSize: '12px',
-        color: 'var(--text-secondary)', lineHeight: '1.8',
-        whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
-      }}>
+      <pre style={{ fontFamily: 'DM Mono, monospace', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.8', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
         {content}
       </pre>
     </div>
@@ -215,8 +172,7 @@ function ResizableSplit({ left, right }: { left: React.ReactNode; right: React.R
     function onMouseMove(e: MouseEvent) {
       if (!dragging.current || !containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const pct = ((e.clientX - rect.left) / rect.width) * 100;
-      setSplitPct(Math.min(75, Math.max(25, pct)));
+      setSplitPct(Math.min(75, Math.max(25, ((e.clientX - rect.left) / rect.width) * 100)));
     }
     function onMouseUp() {
       dragging.current = false;
@@ -225,54 +181,31 @@ function ResizableSplit({ left, right }: { left: React.ReactNode; right: React.R
     }
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
+    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
   }, []);
 
   if (isMobile) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ height: '45vh', borderBottom: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {left}
-        </div>
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {right}
-        </div>
+        <div style={{ height: '45vh', borderBottom: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>{left}</div>
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>{right}</div>
       </div>
     );
   }
 
   return (
     <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
-      {/* Left panel */}
       <div style={{ width: `${splitPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRight: '1px solid var(--border)' }}>
         {left}
       </div>
-
-      {/* Drag handle */}
-      <div
-        onMouseDown={onMouseDown}
-        style={{
-          width: '6px', flexShrink: 0, cursor: 'col-resize',
-          background: 'var(--border)', position: 'relative',
-          transition: 'background 0.15s',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
+      <div onMouseDown={onMouseDown}
+        style={{ width: '6px', flexShrink: 0, cursor: 'col-resize', background: 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s' }}
         onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--accent)'}
         onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--border)'}
       >
-        <div style={{
-          width: '2px', height: '40px', borderRadius: '2px',
-          background: 'var(--border-bright)',
-        }} />
+        <div style={{ width: '2px', height: '40px', borderRadius: '2px', background: 'var(--border-bright)' }} />
       </div>
-
-      {/* Right panel */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {right}
-      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{right}</div>
     </div>
   );
 }
@@ -296,6 +229,7 @@ export default function Chat() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [activeDocIndex, setActiveDocIndex] = useState(0);
+  const [showDocList, setShowDocList] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -303,10 +237,13 @@ export default function Chat() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
   useEffect(() => {
-    function handleClickOutside() { if (exportOpen) setExportOpen(false); }
+    function handleClickOutside() {
+      if (exportOpen) setExportOpen(false);
+      if (showDocList) setShowDocList(false);
+    }
     window.document.addEventListener('click', handleClickOutside);
     return () => window.document.removeEventListener('click', handleClickOutside);
-  }, [exportOpen]);
+  }, [exportOpen, showDocList]);
 
   async function fetchAll() {
     try {
@@ -336,31 +273,22 @@ export default function Chat() {
   async function handleSend() {
     if (!input.trim() || sending) return;
     const question = input.trim();
-    setInput('');
-    setSending(true);
-    setError('');
+    setInput(''); setSending(true); setError('');
 
     const tempId = 'temp-' + Date.now();
     const assistantId = 'stream-' + Date.now();
 
     setMessages(prev => [...prev,
-    { id: tempId, role: 'user', content: question, created_at: new Date().toISOString() },
-    { id: assistantId, role: 'assistant', content: '', created_at: new Date().toISOString() },
+      { id: tempId, role: 'user', content: question, created_at: new Date().toISOString() },
+      { id: assistantId, role: 'assistant', content: '', created_at: new Date().toISOString() },
     ]);
 
     try {
-      const token = window.document.cookie
-        .split('; ').find(r => r.startsWith('token='))?.split('=')[1] || '';
-
+      const token = window.document.cookie.split('; ').find(r => r.startsWith('token='))?.split('=')[1] || '';
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/conversations/${convId}/chat/stream`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ content: question }),
-        }
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ content: question }) }
       );
-
       if (!response.ok) throw new Error('Stream failed');
 
       const reader = response.body!.getReader();
@@ -384,10 +312,12 @@ export default function Chat() {
               ));
             }
             if (data.done) {
+              // Capture sources for source attribution pills
               setMessages(prev => prev.map(m =>
-                m.id === assistantId ? { ...m, id: data.id } : m
+                m.id === assistantId
+                  ? { ...m, id: data.id, sources: data.sources || [] }
+                  : m
               ));
-              // Refetch conversation to get updated auto-title
               const convRes = await api.get(`/conversations/${convId}`);
               setConversation(convRes.data);
             }
@@ -501,17 +431,14 @@ export default function Chat() {
     }),
     messages: { flex: 1, overflowY: 'auto' as const, padding: '24px 20px' },
     bubble: (role: string) => ({
-      maxWidth: '85%', padding: '10px 14px',
+      maxWidth: '100%', padding: '10px 14px',
       borderRadius: role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
       background: role === 'user' ? 'linear-gradient(135deg, #6366F1, #818CF8)' : 'var(--bg-elevated)',
       border: role === 'user' ? 'none' : '1px solid var(--border)',
       color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.6',
       whiteSpace: 'pre-wrap' as const,
     }),
-    inputArea: {
-      borderTop: '1px solid var(--border)', background: 'var(--bg-surface)',
-      padding: '12px 16px', flexShrink: 0,
-    },
+    inputArea: { borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', padding: '12px 16px', flexShrink: 0 },
     textarea: {
       flex: 1, background: 'var(--bg-elevated)', border: '1px solid var(--border)',
       borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)',
@@ -529,8 +456,7 @@ export default function Chat() {
     headerBtn: {
       background: 'var(--bg-elevated)', border: '1px solid var(--border)',
       borderRadius: '7px', padding: '6px 12px',
-      color: 'var(--text-secondary)', fontSize: '12px',
-      cursor: 'pointer', transition: 'all 0.2s',
+      color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s',
     },
   };
 
@@ -547,20 +473,14 @@ export default function Chat() {
           ))}
         </div>
       )}
-
       {/* Doc label */}
-      <div style={{
-        padding: '8px 14px', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-surface)', flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: '8px',
-      }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
         <span style={{
           fontFamily: 'DM Mono, monospace', fontSize: '10px',
           color: activeDoc?.file_type === 'pdf' ? 'var(--danger)' : 'var(--accent-bright)',
           background: activeDoc?.file_type === 'pdf' ? '#F8717115' : '#6366F115',
           border: `1px solid ${activeDoc?.file_type === 'pdf' ? '#F8717130' : '#6366F130'}`,
-          borderRadius: '4px', padding: '2px 6px', textTransform: 'uppercase' as const,
-          letterSpacing: '0.05em',
+          borderRadius: '4px', padding: '2px 6px', textTransform: 'uppercase' as const, letterSpacing: '0.05em',
         }}>
           {activeDoc?.file_type || 'txt'}
         </span>
@@ -568,13 +488,10 @@ export default function Chat() {
           {activeDoc?.title}
         </span>
       </div>
-
       {/* Viewer */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>
-            Loading...
-          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>
         ) : !activeDoc ? null : activeDoc.file_type === 'pdf' ? (
           <PdfViewer docId={activeDoc.id} />
         ) : (
@@ -587,55 +504,104 @@ export default function Chat() {
   // ── Chat panel ─────────────────────────────────────────────────────────────
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Messages */}
       <div style={S.messages}>
         {loading ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 0', fontSize: '13px' }}>
-            Loading conversation...
-          </div>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 0', fontSize: '13px' }}>Loading conversation...</div>
         ) : messages.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 16px' }}>
-            <div style={{ fontSize: '36px', marginBottom: '12px' }}>{isMulti ? '🗂️' : '◈'}</div>
-            <div className="font-mono" style={{ fontSize: '15px', color: 'var(--text-primary)', marginBottom: '6px' }}>
-              Ready to explore
+          /* ── Empty state ── */
+          <div style={{ padding: '32px 8px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+              <div style={{ fontSize: '36px', marginBottom: '12px' }}>{isMulti ? '🗂️' : '◈'}</div>
+              <div className="font-mono" style={{ fontSize: '15px', color: 'var(--text-primary)', marginBottom: '6px' }}>Ready to explore</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+                {isMulti
+                  ? `Ask questions across ${docs.length} documents`
+                  : <>Ask anything about <strong style={{ color: 'var(--text-secondary)' }}>{docs[0]?.title}</strong></>
+                }
+              </div>
             </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', maxWidth: '320px', margin: '0 auto 24px', lineHeight: '1.6' }}>
-              {isMulti
-                ? `Ask questions across ${docs.length} documents`
-                : <>Ask anything about <strong style={{ color: 'var(--text-secondary)' }}>{docs[0]?.title}</strong></>
-              }
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'stretch' }}>
+
+            {/* Multi-doc: doc summary cards */}
+            {isMulti && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '20px' }}>
+                {docs.map((d, i) => (
+                  <div key={d.id} onClick={() => setActiveDocIndex(i)}
+                    style={{
+                      background: 'var(--bg-elevated)',
+                      border: `1px solid ${i === activeDocIndex ? 'var(--accent)' : 'var(--border)'}`,
+                      borderRadius: '10px', padding: '10px 12px', cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { if (i !== activeDocIndex) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-bright)'; }}
+                    onMouseLeave={e => { if (i !== activeDocIndex) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: d.summary ? '4px' : 0 }}>
+                      <span style={{
+                        fontFamily: 'DM Mono, monospace', fontSize: '9px', fontWeight: 600, flexShrink: 0,
+                        color: d.file_type === 'pdf' ? 'var(--danger)' : 'var(--accent-bright)',
+                        background: d.file_type === 'pdf' ? '#F8717115' : '#6366F115',
+                        border: `1px solid ${d.file_type === 'pdf' ? '#F8717130' : '#6366F130'}`,
+                        borderRadius: '3px', padding: '1px 5px',
+                        textTransform: 'uppercase' as const, letterSpacing: '0.05em',
+                      }}>{d.file_type || 'txt'}</span>
+                      <span style={{ fontSize: '12px', fontWeight: 500, color: i === activeDocIndex ? 'var(--accent-bright)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {d.title}
+                      </span>
+                    </div>
+                    {d.summary && (
+                      <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.6', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                        {d.summary}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Starter questions */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {(isMulti
-                ? ['What do these documents have in common?', 'Summarize each document', 'Compare the main topics']
+                ? ['What do these documents have in common?', 'Summarize each document', 'Compare the main topics', 'What are the key differences?']
                 : ['Summarize this document', 'What are the main topics?', 'What are the key conclusions?']
               ).map(q => (
                 <button key={q} onClick={() => setInput(q)} style={{
                   background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                  borderRadius: '8px', padding: '8px 14px',
-                  color: 'var(--text-secondary)', fontSize: '12px',
-                  cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left' as const,
+                  borderRadius: '8px', padding: '8px 14px', color: 'var(--text-secondary)',
+                  fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left' as const,
                 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-bright)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
-                >
-                  {q}
-                </button>
+                >{q}</button>
               ))}
             </div>
           </div>
         ) : (
+          /* ── Messages ── */
           <div className="animate-fade-in">
             {messages.map(msg => (
               <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: '12px' }}>
-                <div style={S.bubble(msg.role)}>
-                  {msg.content || (msg.role === 'assistant' && sending ? (
-                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                      {[0, 1, 2].map(i => (
-                        <span key={i} className="dot-bounce" style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />
+                <div style={{ maxWidth: '85%' }}>
+                  <div style={S.bubble(msg.role)}>
+                    {msg.content || (msg.role === 'assistant' && sending ? (
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        {[0, 1, 2].map(i => <span key={i} className="dot-bounce" style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--text-muted)', display: 'block' }} />)}
+                      </div>
+                    ) : null)}
+                  </div>
+                  {/* Source attribution — multi-doc assistant messages only */}
+                  {isMulti && msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '5px', paddingLeft: '2px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', alignSelf: 'center' }}>from</span>
+                      {msg.sources.map(src => (
+                        <span key={src} style={{
+                          fontSize: '10px', background: '#6366F115', border: '1px solid #6366F130',
+                          borderRadius: '4px', padding: '2px 6px', color: 'var(--accent-bright)',
+                          fontFamily: 'DM Mono, monospace',
+                        }}>
+                          ◈ {src.length > 28 ? src.slice(0, 28) + '…' : src}
+                        </span>
                       ))}
                     </div>
-                  ) : null)}
+                  )}
                 </div>
               </div>
             ))}
@@ -646,18 +612,11 @@ export default function Chat() {
 
       {/* Input */}
       <div style={S.inputArea}>
-        {error && (
-          <div style={{ color: 'var(--danger)', fontSize: '12px', marginBottom: '8px' }}>{error}</div>
-        )}
+        {error && <div style={{ color: 'var(--danger)', fontSize: '12px', marginBottom: '8px' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
+          <textarea ref={textareaRef} value={input} onChange={handleInput} onKeyDown={handleKeyDown}
             placeholder={isMulti ? 'Ask across all documents...' : 'Ask about this document...'}
-            rows={1}
-            style={S.textarea}
+            rows={1} style={S.textarea}
             onFocus={e => e.target.style.borderColor = 'var(--accent)'}
             onBlur={e => e.target.style.borderColor = 'var(--border)'}
           />
@@ -665,9 +624,7 @@ export default function Chat() {
             {sending ? '...' : 'Send'}
           </button>
         </div>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '6px' }}>
-          Enter to send · Shift+Enter for new line
-        </div>
+        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '6px' }}>Enter to send · Shift+Enter for new line</div>
       </div>
     </div>
   );
@@ -677,10 +634,7 @@ export default function Chat() {
       {/* Header */}
       <header style={S.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <button onClick={() => router.push('/dashboard')} style={{
-            background: 'none', border: 'none', color: 'var(--text-secondary)',
-            cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px',
-          }}>
+          <button onClick={() => router.push('/dashboard')} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             ← Back
           </button>
           <div style={{ width: '1px', height: '16px', background: 'var(--border)' }} />
@@ -690,17 +644,27 @@ export default function Chat() {
             </div>
             {isMulti && (
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '1px' }}>
-                {docs.map(d => d.title).join(' · ').slice(0, 60)}
+                {docs.map(d => d.title).join(' · ').slice(0, 60)}{docs.map(d => d.title).join(' · ').length > 60 ? '…' : ''}
               </div>
             )}
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Collapsible doc list button — multi-doc only */}
           {isMulti && (
-            <span style={{ background: '#34D39915', border: '1px solid #34D39930', borderRadius: '6px', padding: '4px 10px', color: 'var(--success)', fontSize: '11px', fontWeight: 500 }}>
-              {docs.length} docs
-            </span>
+            <button
+              onClick={e => { e.stopPropagation(); setShowDocList(v => !v); }}
+              style={{
+                background: showDocList ? 'var(--accent-dim)' : '#34D39915',
+                border: `1px solid ${showDocList ? 'var(--accent)' : '#34D39930'}`,
+                borderRadius: '6px', padding: '4px 10px',
+                color: showDocList ? 'var(--accent-bright)' : 'var(--success)',
+                fontSize: '11px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              {docs.length} docs {showDocList ? '▲' : '▼'}
+            </button>
           )}
           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
             {messages.length} msg{messages.length !== 1 ? 's' : ''}
@@ -737,6 +701,46 @@ export default function Chat() {
         </div>
       </header>
 
+      {/* Collapsible doc list — multi-doc only */}
+      {isMulti && showDocList && (
+        <div onClick={e => e.stopPropagation()} style={{
+          borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)',
+          padding: '10px 24px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '4px',
+        }}>
+          {docs.map((d, i) => (
+            <div key={d.id} onClick={() => { setActiveDocIndex(i); setShowDocList(false); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '7px 10px', borderRadius: '8px', cursor: 'pointer',
+                background: i === activeDocIndex ? 'var(--accent-dim)' : 'transparent',
+                border: `1px solid ${i === activeDocIndex ? 'var(--accent)' : 'transparent'}`,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { if (i !== activeDocIndex) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)'; }}
+              onMouseLeave={e => { if (i !== activeDocIndex) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+            >
+              <span style={{
+                fontFamily: 'DM Mono, monospace', fontSize: '9px', fontWeight: 600, flexShrink: 0,
+                color: d.file_type === 'pdf' ? 'var(--danger)' : 'var(--accent-bright)',
+                background: d.file_type === 'pdf' ? '#F8717115' : '#6366F115',
+                border: `1px solid ${d.file_type === 'pdf' ? '#F8717130' : '#6366F130'}`,
+                borderRadius: '3px', padding: '1px 5px', textTransform: 'uppercase' as const, letterSpacing: '0.05em',
+              }}>{d.file_type || 'txt'}</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: i === activeDocIndex ? 'var(--accent-bright)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {d.title}
+                </div>
+                {d.summary && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {d.summary.slice(0, 90)}{d.summary.length > 90 ? '…' : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Split view */}
       <ResizableSplit left={docViewerPanel} right={chatPanel} />
 
@@ -748,9 +752,7 @@ export default function Chat() {
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '480px' }}
             onClick={e => e.stopPropagation()}
           >
-            <h2 className="font-mono" style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
-              Share conversation
-            </h2>
+            <h2 className="font-mono" style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>Share conversation</h2>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
               Anyone with this link can view this conversation in read-only mode.
             </p>
