@@ -28,16 +28,19 @@ interface Doc {
 }
 
 // ─── PDF Viewer ───────────────────────────────────────────────────────────────
-function PdfViewer({ docId }: { docId: string }) {
+function PdfViewer({ docId, onSelect }: { docId: string; onSelect?: (text: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [popup, setPopup] = useState<{ x: number; y: number; text: string } | null>(null);
   const pdfRef = useRef<any>(null);
   const renderTaskRef = useRef<any>(null);
+  const pdfjsLibRef = useRef<any>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +50,7 @@ function PdfViewer({ docId }: { docId: string }) {
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc =
           `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+        pdfjsLibRef.current = pdfjsLib;
 
         const token = window.document.cookie.split('; ').find(r => r.startsWith('token='))?.split('=')[1] || '';
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/documents/${docId}/file`,
@@ -69,6 +73,10 @@ function PdfViewer({ docId }: { docId: string }) {
     async function renderPage() {
       try {
         if (renderTaskRef.current) { try { renderTaskRef.current.cancel(); } catch { } }
+
+        // Clear old text layer
+        if (textLayerRef.current) textLayerRef.current.innerHTML = '';
+
         const page = await pdfRef.current.getPage(currentPage);
         const canvas = canvasRef.current;
         const container = containerRef.current;
@@ -88,12 +96,51 @@ function PdfViewer({ docId }: { docId: string }) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         renderTaskRef.current = page.render({ canvasContext: ctx, viewport });
         await renderTaskRef.current.promise;
+
+        // Render text layer for selection
+        if (textLayerRef.current && pdfjsLibRef.current) {
+          const textContent = await page.getTextContent();
+          const textLayer = textLayerRef.current;
+          textLayer.style.width = viewport.width + 'px';
+          textLayer.style.height = viewport.height + 'px';
+
+          await pdfjsLibRef.current.renderTextLayer({
+            textContentSource: textContent,
+            container: textLayer,
+            viewport,
+            textDivs: [],
+          }).promise;
+        }
       } catch (e: any) {
         if (e?.name !== 'RenderingCancelledException') console.error('Render error', e);
       }
     }
     renderPage();
   }, [currentPage, scale, loading]);
+
+  // Handle text selection → show popup
+  function handleMouseUp(e: React.MouseEvent) {
+    const selection = window.getSelection();
+    const selected = selection?.toString().trim();
+    if (!selected || selected.length < 3) {
+      setPopup(null);
+      return;
+    }
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    if (!containerRect) return;
+    // Position popup relative to the container
+    const x = e.clientX - containerRect.left;
+    const y = e.clientY - containerRect.top;
+    setPopup({ x, y, text: selected });
+  }
+
+  function handleAskAbout() {
+    if (!popup) return;
+    const quoted = `"${popup.text.slice(0, 300)}${popup.text.length > 300 ? '…' : ''}"`;
+    onSelect?.(quoted);
+    setPopup(null);
+    window.getSelection()?.removeAllRanges();
+  }
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>Loading PDF...</div>
@@ -104,6 +151,7 @@ function PdfViewer({ docId }: { docId: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1} style={pdfBtnStyle(currentPage > 1)}>←</button>
@@ -117,11 +165,83 @@ function PdfViewer({ docId }: { docId: string }) {
           <button onClick={() => setScale(1.0)} style={pdfBtnStyle(true)}>↺</button>
         </div>
       </div>
-      <div ref={containerRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', minWidth: 0 }}>
-        <div style={{ margin: '0 auto', flexShrink: 0 }}>
+
+      {/* Canvas + text layer container */}
+      <div
+        ref={containerRef}
+        onMouseUp={handleMouseUp}
+        onClick={e => { if (!(e.target as HTMLElement).closest('.ask-popup')) setPopup(null); }}
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '16px', background: '#1a1a2e', display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', minWidth: 0, position: 'relative' }}
+      >
+        <div style={{ margin: '0 auto', flexShrink: 0, position: 'relative' }}>
           <canvas ref={canvasRef} style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)', display: 'block' }} />
+          {/* Text layer — sits over canvas, transparent except selection highlight */}
+          <div
+            ref={textLayerRef}
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              overflow: 'hidden', opacity: 1, lineHeight: 1,
+              // pdf.js text layer styles
+            }}
+            className="pdfjs-text-layer"
+          />
+          {/* Selection popup */}
+          {popup && (
+            <div
+              className="ask-popup"
+              style={{
+                position: 'fixed',
+                left: `${(containerRef.current?.getBoundingClientRect().left ?? 0) + popup.x}px`,
+                top: `${(containerRef.current?.getBoundingClientRect().top ?? 0) + popup.y - 44}px`,
+                zIndex: 100,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--accent)',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                boxShadow: '0 4px 20px rgba(99,102,241,0.25)',
+                transform: 'translateX(-50%)',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'auto',
+              }}
+            >
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                "{popup.text.slice(0, 40)}{popup.text.length > 40 ? '…' : ''}"
+              </span>
+              <button
+                onClick={handleAskAbout}
+                style={{
+                  background: 'linear-gradient(135deg, #6366F1, #818CF8)',
+                  border: 'none', borderRadius: '6px', padding: '4px 10px',
+                  color: 'white', fontSize: '11px', fontWeight: 600,
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                Ask about this ↗
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Text layer CSS injected inline */}
+      <style>{`
+        .pdfjs-text-layer span {
+          color: transparent;
+          position: absolute;
+          white-space: pre;
+          cursor: text;
+          transform-origin: 0% 0%;
+        }
+        .pdfjs-text-layer span::selection {
+          background: rgba(99, 102, 241, 0.35);
+          color: transparent;
+        }
+        .pdfjs-text-layer span::-moz-selection {
+          background: rgba(99, 102, 241, 0.35);
+          color: transparent;
+        }
+      `}</style>
     </div>
   );
 }
@@ -493,7 +613,10 @@ export default function Chat() {
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>
         ) : !activeDoc ? null : activeDoc.file_type === 'pdf' ? (
-          <PdfViewer docId={activeDoc.id} />
+          <PdfViewer docId={activeDoc.id} onSelect={text => {
+            setInput(`About this passage: ${text}\n\n`);
+            textareaRef.current?.focus();
+          }} />
         ) : (
           <TxtViewer content={activeDoc.content} />
         )}
